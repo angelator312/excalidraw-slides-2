@@ -9,6 +9,8 @@ import { setupWebSocket } from './ws.js';
 import authRouter from './api/auth.js';
 import teamsRouter from './api/teams.js';
 import presentationsRouter from './api/presentations.js';
+import adminRouter from './api/admin.js';
+import librariesRouter from './api/libraries.js';
 import { optionalAuth } from './middleware/auth.js';
 
 // Validate required environment in production
@@ -43,6 +45,15 @@ app.use('/api/', rateLimit({
   legacyHeaders: false,
 }));
 
+/* ── Stricter rate limit for invite generation ── */
+app.use('/api/admin/invite', rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many invite requests, please try again later' },
+}));
+
 /* ── Optional auth for all routes ── */
 app.use(optionalAuth);
 
@@ -50,6 +61,8 @@ app.use(optionalAuth);
 app.use('/api/auth', authRouter);
 app.use('/api/teams', teamsRouter);
 app.use('/api/presentations', presentationsRouter);
+app.use('/api/presentations/:id/libraries', librariesRouter);
+app.use('/api/admin', adminRouter);
 
 /* ── Health ── */
 app.get('/health', (_req, res) => {
