@@ -14,6 +14,7 @@ interface Props {
   canControl: boolean;
   onNotesSave: (notes: string) => Promise<void>;
   slideElementRefs: RefObject<Map<number, HTMLElement>>;
+  presentationId?: string;
 }
 
 export function PresenterView({
@@ -23,6 +24,7 @@ export function PresenterView({
   onExit,
   canControl,
   onNotesSave,
+  presentationId,
 }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -149,6 +151,7 @@ export function PresenterView({
               <ExcalidrawViewer
                 slide={currentSlide}
                 viewMode={true}
+                presentationId={presentationId}
                 className="presenter-excalidraw"
               />
             )}

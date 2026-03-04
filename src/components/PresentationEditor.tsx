@@ -149,6 +149,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         canControl={pres.canEdit || user?.role === 'owner'}
         onNotesSave={handleNotesSave}
         slideElementRefs={slideRefs}
+        presentationId={presentationId}
       />
     );
   }
@@ -191,6 +192,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
                 slide={currentSlide}
                 viewMode={!pres.canEdit}
                 onChange={pres.canEdit ? handleSceneChange : undefined}
+                presentationId={presentationId}
               />
             </div>
           ) : (
