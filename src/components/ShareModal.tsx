@@ -62,7 +62,13 @@ export function ShareModal({ presentationId, onClose }: Props) {
   };
 
   return (
-    <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Share Presentation">
+    <div
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Share Presentation"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div class="modal-box modal-wide">
         <div class="modal-header">
           <h2>Share Presentation</h2>

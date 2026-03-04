@@ -69,7 +69,24 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-/* ── 404 ── */
+/* ── Static files (production build) + SPA fallback ── */
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CLIENT_DIST = join(__dirname, '../../../dist');
+app.use(express.static(CLIENT_DIST));
+// Serve index.html for all non-API routes so client-side routing works
+// (e.g. /presentation/:id navigates correctly on direct load / refresh)
+app.get(/^(?!\/api\/).*/, (_req, res) => {
+  res.sendFile(join(CLIENT_DIST, 'index.html'), (err) => {
+    if (err) {
+      // In development the dist folder may not exist — that's fine, Vite handles it
+      res.status(404).json({ error: 'Not found' });
+    }
+  });
+});
+
+/* ── 404 (API-only catch-all) ── */
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });
 });

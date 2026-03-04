@@ -26,5 +26,10 @@ export function useAuth() {
       .finally(() => setLoading(false));
   }, []);
 
-  return { user, loading };
+  const logout = () => {
+    localStorage.removeItem('sessionToken');
+    window.location.href = '/';
+  };
+
+  return { user, loading, logout };
 }

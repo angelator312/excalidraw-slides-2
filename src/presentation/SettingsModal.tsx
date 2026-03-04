@@ -48,7 +48,13 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
   };
 
   return (
-    <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Presentation Settings">
+    <div
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Presentation Settings"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div class="modal-box">
         <div class="modal-header">
           <h2>Settings</h2>

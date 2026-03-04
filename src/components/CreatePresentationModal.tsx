@@ -3,7 +3,7 @@ import { apiFetch } from '../lib/api';
 
 interface Props {
   onClose: () => void;
-  onCreate: () => void;
+  onCreate: (id: string) => void;
 }
 
 export function CreatePresentationModal({ onClose, onCreate }: Props) {
@@ -18,11 +18,11 @@ export function CreatePresentationModal({ onClose, onCreate }: Props) {
     setError('');
     setLoading(true);
     try {
-      await apiFetch('/api/presentations', {
+      const pres = await apiFetch<{ _id: string }>('/api/presentations', {
         method: 'POST',
         body: JSON.stringify({ title: title.trim(), visibility }),
       });
-      onCreate();
+      onCreate(pres._id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create presentation');
     } finally {
@@ -31,7 +31,13 @@ export function CreatePresentationModal({ onClose, onCreate }: Props) {
   };
 
   return (
-    <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Create Presentation">
+    <div
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create Presentation"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div class="modal-box">
         <div class="modal-header">
           <h2>New Presentation</h2>

@@ -1,11 +1,12 @@
-import { useState } from 'preact/hooks';
 import { PresentationList } from './PresentationList';
 import { LoginPage } from './LoginPage';
+import { PresentationEditor } from './PresentationEditor';
 import { useAuth } from '../hooks/useAuth';
+import { useRouter } from '../hooks/useRouter';
 
 export function App() {
-  const { user, loading } = useAuth();
-  const [view, setView] = useState<'home' | 'presentation'>('home');
+  const { user, loading, logout } = useAuth();
+  const { route, navigateToPresentation, navigateHome } = useRouter();
 
   if (loading) {
     return (
@@ -19,34 +20,52 @@ export function App() {
     return <LoginPage />;
   }
 
+  // Route: /presentation/:id
+  if (route.path === 'presentation') {
+    return (
+      <PresentationEditor
+        presentationId={route.id}
+        onBack={navigateHome}
+      />
+    );
+  }
+
+  // Route: / (home)
   return (
-    <div class="app-layout">
+    <div class="app-shell">
       <header class="app-header">
-        <div class="app-logo">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-            <rect width="28" height="28" rx="6" fill="#e94560" />
-            <rect x="6" y="8" width="16" height="2" rx="1" fill="white" />
-            <rect x="6" y="13" width="12" height="2" rx="1" fill="white" />
-            <rect x="6" y="18" width="8" height="2" rx="1" fill="white" />
-          </svg>
-          <span>Excalidraw Slides</span>
+        <div class="app-header-left">
+          <div class="app-logo" aria-label="Excalidraw Slides">
+            {/* Excalidraw-style pencil/wave logo */}
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <rect width="32" height="32" rx="8" fill="#6965db" />
+              <path d="M8 22 L13 10 L18 18 L21 14 L25 22" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+            <span class="app-logo-text">Excalidraw Slides</span>
+          </div>
         </div>
-        <nav class="app-nav">
-          <button
-            class={`nav-btn ${view === 'home' ? 'active' : ''}`}
-            onClick={() => setView('home')}
-            aria-current={view === 'home' ? 'page' : undefined}
-          >
+
+        <nav class="app-nav" aria-label="Main navigation">
+          <button class="nav-btn active" aria-current="page">
             Presentations
           </button>
         </nav>
-        <div class="app-user">
-          <span class="user-badge" title={user.username}>{getInitials(user.displayName || user.username)}</span>
-          <span class="user-name">{user.displayName || user.username}</span>
+
+        <div class="app-header-right">
+          <div class="user-info">
+            <span class="user-avatar" title={user.username} aria-label={user.displayName || user.username}>
+              {getInitials(user.displayName || user.username)}
+            </span>
+            <span class="user-name" aria-hidden="true">{user.displayName || user.username}</span>
+          </div>
+          <button class="btn-ghost" onClick={logout} aria-label="Log out">
+            Log out
+          </button>
         </div>
       </header>
+
       <main class="app-main">
-        {view === 'home' && <PresentationList />}
+        <PresentationList onOpen={navigateToPresentation} />
       </main>
     </div>
   );

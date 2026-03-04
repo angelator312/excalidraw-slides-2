@@ -1,69 +1,115 @@
 import { useState } from 'preact/hooks';
-import type { RefObject } from 'preact';
 import type { SlideRef } from './slideModel';
-import {
-  exportSlidesAsPng,
-  exportNotesAsMarkdown,
-  downloadText,
-  generateThumbnails,
-} from './export';
 
 interface Props {
   slides: SlideRef[];
-  slideElementRefs: RefObject<Map<number, HTMLElement>>;
+  slideElementRefs: import('preact').RefObject<Map<number, HTMLElement>>;
   onClose: () => void;
 }
 
-export function ExportModal({ slides, slideElementRefs, onClose }: Props) {
-  const [exporting, setExporting] = useState<'png' | 'notes' | 'thumbnails' | null>(null);
-  const [dpi, setDpi] = useState<1 | 2>(2);
-  const [notesFormat, setNotesFormat] = useState<'markdown' | 'txt'>('markdown');
+async function exportSlideWithExcalidraw(
+  slide: SlideRef,
+  format: 'png' | 'svg',
+  scale = 2,
+): Promise<Blob | string> {
+  const { exportToBlob, exportToSvg } = await import('@excalidraw/excalidraw');
+  const elements = (slide.sceneJSON?.elements ?? []) as Parameters<typeof exportToBlob>[0]['elements'];
+  const appState = {
+    exportWithDarkMode: false,
+    exportBackground: true,
+    ...(slide.sceneJSON?.appState ?? {}),
+  } as Parameters<typeof exportToBlob>[0]['appState'];
+  const files = (slide.sceneJSON?.files ?? {}) as Parameters<typeof exportToBlob>[0]['files'];
 
-  const getElements = (): HTMLElement[] => {
-    const map = slideElementRefs.current;
-    if (!map) return [];
-    return slides.map((_, i) => map.get(i)).filter(Boolean) as HTMLElement[];
+  if (format === 'svg') {
+    const svg = await exportToSvg({ elements, appState, files });
+    return new XMLSerializer().serializeToString(svg);
+  }
+  return exportToBlob({ elements, appState, files, mimeType: 'image/png', quality: 1, scale });
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadText(text: string, filename: string, mimeType = 'text/plain') {
+  const blob = new Blob([text], { type: mimeType });
+  downloadBlob(blob, filename);
+}
+
+function exportNotesAsMarkdown(slides: SlideRef[], format: 'markdown' | 'txt'): string {
+  const lines: string[] = [];
+  slides.forEach((slide, i) => {
+    const num = i + 1;
+    if (format === 'markdown') {
+      lines.push(`## Slide ${num}: ${slide.title}`, '', slide.notes || '_No notes_', '', '---', '');
+    } else {
+      lines.push(`--- Slide ${num}: ${slide.title} ---`, '', slide.notes || '(no notes)', '');
+    }
+  });
+  return lines.join('\n');
+}
+
+export function ExportModal({ slides, onClose }: Props) {
+  const [exporting, setExporting] = useState<'png' | 'svg' | 'notes' | null>(null);
+  const [scale, setScale] = useState<1 | 2>(2);
+  const [notesFormat, setNotesFormat] = useState<'markdown' | 'txt'>('markdown');
+  const [exportError, setExportError] = useState('');
+
+  const handleExportAllPng = async () => {
+    setExporting('png');
+    setExportError('');
+    try {
+      for (let i = 0; i < slides.length; i++) {
+        const blob = await exportSlideWithExcalidraw(slides[i], 'png', scale);
+        if (blob instanceof Blob) downloadBlob(blob, `slide-${i + 1}.png`);
+        await new Promise((r) => setTimeout(r, 80));
+      }
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(null);
+    }
   };
 
-  const handleExportPng = async () => {
-    setExporting('png');
+  const handleExportAllSvg = async () => {
+    setExporting('svg');
+    setExportError('');
     try {
-      await exportSlidesAsPng(getElements(), { dpi });
+      for (let i = 0; i < slides.length; i++) {
+        const svg = await exportSlideWithExcalidraw(slides[i], 'svg');
+        if (typeof svg === 'string') downloadText(svg, `slide-${i + 1}.svg`, 'image/svg+xml');
+        await new Promise((r) => setTimeout(r, 80));
+      }
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Export failed');
     } finally {
       setExporting(null);
     }
   };
 
   const handleExportNotes = () => {
-    setExporting('notes');
-    try {
-      const content = exportNotesAsMarkdown(slides, { notesFormat });
-      const ext = notesFormat === 'markdown' ? 'md' : 'txt';
-      downloadText(content, `notes.${ext}`);
-    } finally {
-      setExporting(null);
-    }
-  };
-
-  const handleExportThumbnails = async () => {
-    setExporting('thumbnails');
-    try {
-      const thumbs = await generateThumbnails(getElements());
-      thumbs.forEach(({ filename, dataUrl }) => {
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = `thumbnails/${filename}`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      });
-    } finally {
-      setExporting(null);
-    }
+    const ext = notesFormat === 'markdown' ? 'md' : 'txt';
+    const content = exportNotesAsMarkdown(slides, notesFormat);
+    const blob = new Blob([content], { type: 'text/plain' });
+    downloadBlob(blob, `notes.${ext}`);
   };
 
   return (
-    <div class="modal-overlay" role="dialog" aria-modal="true" aria-label="Export">
+    <div
+      class="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Export"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div class="modal-box">
         <div class="modal-header">
           <h2>Export</h2>
@@ -71,40 +117,51 @@ export function ExportModal({ slides, slideElementRefs, onClose }: Props) {
         </div>
 
         <div class="export-options">
-          <section>
-            <h3>Slides as PNG</h3>
-            <label>
-              DPI scale:
+          {exportError && <p class="error-msg" role="alert">{exportError}</p>}
+
+          <section class="export-section">
+            <h3>Export as PNG <span class="text-muted">(via Excalidraw)</span></h3>
+            <label class="export-label">
+              Scale:
               <select
-                value={dpi}
-                onChange={(e) => setDpi(Number((e.target as HTMLSelectElement).value) as 1 | 2)}
-                aria-label="DPI scale"
+                value={scale}
+                onChange={(e) => setScale(Number((e.target as HTMLSelectElement).value) as 1 | 2)}
+                aria-label="Export scale"
               >
-                <option value={1}>1× (standard)</option>
-                <option value={2}>2× (retina)</option>
+                <option value={1}>1× standard</option>
+                <option value={2}>2× retina</option>
               </select>
             </label>
             <button
               class="btn-primary"
-              onClick={() => void handleExportPng()}
+              onClick={() => void handleExportAllPng()}
               disabled={!!exporting}
             >
-              {exporting === 'png' ? 'Exporting…' : 'Download PNGs'}
+              {exporting === 'png' ? 'Exporting…' : `Download ${slides.length} PNG${slides.length !== 1 ? 's' : ''}`}
             </button>
           </section>
 
-          <section>
-            <h3>Notes</h3>
-            <label>
+          <section class="export-section">
+            <h3>Export as SVG <span class="text-muted">(via Excalidraw)</span></h3>
+            <button
+              class="btn-secondary"
+              onClick={() => void handleExportAllSvg()}
+              disabled={!!exporting}
+            >
+              {exporting === 'svg' ? 'Exporting…' : `Download ${slides.length} SVG${slides.length !== 1 ? 's' : ''}`}
+            </button>
+          </section>
+
+          <section class="export-section">
+            <h3>Speaker notes</h3>
+            <label class="export-label">
               Format:
               <select
                 value={notesFormat}
-                onChange={(e) =>
-                  setNotesFormat((e.target as HTMLSelectElement).value as 'markdown' | 'txt')
-                }
+                onChange={(e) => setNotesFormat((e.target as HTMLSelectElement).value as 'markdown' | 'txt')}
                 aria-label="Notes format"
               >
-                <option value="markdown">Markdown (with thumbnail links)</option>
+                <option value="markdown">Markdown</option>
                 <option value="txt">Plain text</option>
               </select>
             </label>
@@ -113,19 +170,7 @@ export function ExportModal({ slides, slideElementRefs, onClose }: Props) {
               onClick={handleExportNotes}
               disabled={!!exporting}
             >
-              {exporting === 'notes' ? 'Exporting…' : 'Download Notes'}
-            </button>
-          </section>
-
-          <section>
-            <h3>Thumbnails (separate files)</h3>
-            <p class="text-muted">Saves each slide thumbnail as a PNG in a <code>thumbnails/</code> folder.</p>
-            <button
-              class="btn-secondary"
-              onClick={() => void handleExportThumbnails()}
-              disabled={!!exporting}
-            >
-              {exporting === 'thumbnails' ? 'Exporting…' : 'Download Thumbnails'}
+              Download notes
             </button>
           </section>
         </div>
