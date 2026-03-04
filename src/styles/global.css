@@ -93,3 +93,505 @@ input:focus, textarea:focus, select:focus {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+
+/* ── Utility ── */
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin: auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.loading-placeholder,
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-text-muted);
+  font-size: 1.1rem;
+}
+
+.error-msg {
+  color: var(--color-danger);
+  padding: 16px;
+}
+
+.text-muted { color: var(--color-text-muted); font-size: 0.85rem; }
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background var(--transition);
+}
+.btn-primary:hover { background: var(--color-primary-hover); }
+
+.btn-secondary {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  font-size: 0.9rem;
+  transition: border-color var(--transition);
+}
+.btn-secondary:hover { border-color: var(--color-primary); }
+
+.btn-icon {
+  background: transparent;
+  color: var(--color-text);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  transition: background var(--transition);
+}
+.btn-icon:hover { background: var(--color-surface-2); }
+.btn-icon.active { color: var(--color-primary); }
+.btn-icon.btn-danger:hover { color: var(--color-danger); }
+
+/* ── Editor layout ── */
+.editor-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.editor-title {
+  flex: 1;
+  font-size: 1rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Slide nav (left sidebar) ── */
+.slide-nav {
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.slide-nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.slide-nav-list {
+  list-style: none;
+  padding: 6px 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.slide-nav-item {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+}
+
+.slide-nav-item.active .slide-nav-btn {
+  background: var(--color-surface-2);
+  color: var(--color-primary);
+}
+
+.slide-nav-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px;
+  background: transparent;
+  color: var(--color-text);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  text-align: left;
+  transition: background var(--transition);
+}
+.slide-nav-btn:hover { background: var(--color-surface-2); }
+
+.slide-num {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  min-width: 18px;
+  text-align: right;
+}
+
+.slide-delete-btn { opacity: 0; font-size: 0.75rem; }
+.slide-nav-item:hover .slide-delete-btn { opacity: 1; }
+
+/* ── Slide canvas area (Excalidraw) ── */
+.slide-canvas-area {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #f0f0f0;
+  position: relative;
+}
+
+.slide-excalidraw-wrap {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Excalidraw viewer container ── */
+.excalidraw-viewer {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.excalidraw-viewer--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8f8f8;
+}
+
+.excalidraw-viewer--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-danger);
+  padding: 16px;
+}
+
+/* Excalidraw needs specific height on its inner container */
+.excalidraw-viewer .excalidraw,
+.excalidraw-viewer .excalidraw-container {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ── Presenter view ── */
+.presenter-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #111;
+  color: #eaeaea;
+  overflow: hidden;
+}
+
+.presenter-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.slide-counter { font-size: 0.9rem; color: #aaa; }
+
+.presenter-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.presenter-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.presenter-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.presenter-slide-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+}
+
+/* ExcalidrawViewer fills the presenter area */
+.presenter-excalidraw {
+  width: 100%;
+  height: 100%;
+}
+
+.presenter-nav-btns {
+  display: flex;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #1a1a1a;
+  flex-shrink: 0;
+}
+
+.presenter-nav-btns button { flex: 1; }
+
+/* ── Presenter sidebar ── */
+.presenter-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  background: #1a1a1a;
+  border-left: 1px solid #333;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+}
+
+.presenter-sidebar > div {
+  padding: 14px 16px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.presenter-sidebar h4 {
+  font-size: 0.8rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+
+.next-slide-preview .slide-thumb-small {
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  position: relative;
+  height: 120px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tiny excalidraw thumb in next-slide preview */
+.presenter-excalidraw-thumb {
+  flex: 1;
+  pointer-events: none;
+}
+
+.thumb-label {
+  font-size: 0.75rem;
+  padding: 4px 6px;
+  background: rgba(0,0,0,0.6);
+  color: #eee;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notes-editor {
+  width: 100%;
+  resize: vertical;
+  min-height: 80px;
+  background: #222;
+  color: #ddd;
+  border: 1px solid #444;
+}
+
+.presence-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.presence-item { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+.presence-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Presenter thumbnail strip ── */
+.presenter-thumbstrip {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.thumb-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  background: #2a2a2a;
+  border-radius: 6px;
+  min-width: 64px;
+  color: #aaa;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  transition: background var(--transition);
+}
+.thumb-item:hover { background: #3a3a3a; }
+.thumb-item.active { background: var(--color-surface-2); color: var(--color-primary); outline: 2px solid var(--color-primary); }
+.thumb-number { font-weight: 700; font-size: 0.85rem; }
+.thumb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80px; }
+
+/* ── Laser pointer ── */
+.laser-pointer {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(233, 69, 96, 0.8);
+  box-shadow: 0 0 8px rgba(233, 69, 96, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* ── Login / auth pages ── */
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+.login-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 36px 32px;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  box-shadow: var(--shadow);
+}
+
+.login-card h1 { font-size: 1.4rem; text-align: center; }
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.form-group label { font-size: 0.85rem; color: var(--color-text-muted); }
+.form-group input { width: 100%; }
+
+/* ── Presentation list ── */
+.presentation-list {
+  padding: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.pres-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.pres-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  cursor: pointer;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.pres-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 12px rgba(233, 69, 96, 0.15);
+}
+.pres-card h3 { font-size: 1rem; margin-bottom: 6px; }
+.pres-card p { font-size: 0.8rem; color: var(--color-text-muted); }
+
+/* ── Modals ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  min-width: 340px;
+  max-width: 520px;
+  width: 100%;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-card h2 { font-size: 1.1rem; }
+.modal-footer { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ── Library uploader ── */
+.library-uploader { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.library-uploader h3 { font-size: 0.9rem; font-weight: 600; }
+.library-upload-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.upload-label {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.library-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.library-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+}
+.library-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

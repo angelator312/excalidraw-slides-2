@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
+export { MAX_LIBRARY_SIZE_BYTES, validateLibraryData } from '../../../src/lib/libraryValidation.js';
 
 /**
  * An Excalidraw element library attached to a presentation.
@@ -30,23 +31,5 @@ const LibrarySchema = new Schema<ILibrary>(
 );
 
 LibrarySchema.index({ presentationId: 1 });
-
-/** Maximum allowed library JSON size: 2 MB */
-export const MAX_LIBRARY_SIZE_BYTES = 2 * 1024 * 1024;
-
-/** Validate that the parsed library JSON has the expected Excalidraw library shape */
-export function validateLibraryData(data: unknown): data is Record<string, unknown> {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
-  const lib = data as Record<string, unknown>;
-  // Excalidraw library format: { type: "excalidrawlib", version: number, library: [...] }
-  // OR the older format: { libraryItems: [...] }
-  if (
-    (lib['type'] === 'excalidrawlib' && Array.isArray(lib['library'])) ||
-    Array.isArray(lib['libraryItems'])
-  ) {
-    return true;
-  }
-  return false;
-}
 
 export const Library = mongoose.model<ILibrary>('Library', LibrarySchema);

@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { apiFetch } from '../lib/api';
 import { PresenterView } from '../presentation/PresenterView';
-import type { SlideRef } from '../presentation/slideModel';
+import type { SlideRef, ExcalidrawScene } from '../presentation/slideModel';
 import { SlideNav } from '../presentation/SlideNav';
 import { HistoryPanel } from '../presentation/HistoryPanel';
 import { ShareModal } from './ShareModal';
 import { SettingsModal } from '../presentation/SettingsModal';
 import { ExportModal } from '../presentation/ExportModal';
+import { ExcalidrawViewer } from './ExcalidrawViewer';
 import { rtcClient } from '../presentation/rtc';
 import { useAuth } from '../hooks/useAuth';
 
@@ -104,6 +105,34 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
     }
   };
 
+  /** Persist a scene change coming from the Excalidraw editor canvas */
+  const handleSceneChange = async (sceneJSON: ExcalidrawScene) => {
+    if (!pres) return;
+    const slide = pres.slides[currentIndex];
+    if (!slide) return;
+
+    // Optimistically update local state
+    setPres((prev) => {
+      if (!prev) return prev;
+      const slides = prev.slides.map((s, i) =>
+        i === currentIndex ? { ...s, sceneJSON } : s,
+      );
+      return { ...prev, slides };
+    });
+
+    // Broadcast to other participants via WebSocket
+    rtcClient.sendDiff(slide.id, sceneJSON);
+
+    try {
+      await apiFetch(`/api/presentations/${presentationId}/slides/${slide.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ sceneJSON }),
+      });
+    } catch {
+      // non-critical — local state is still updated
+    }
+  };
+
   if (loading) return <div class="loading-placeholder">Loading presentation…</div>;
   if (error) return <div class="error-msg">{error} <button onClick={onBack}>Back</button></div>;
   if (!pres) return null;
@@ -155,13 +184,14 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         <div class="slide-canvas-area">
           {currentSlide ? (
             <div
-              class="slide-preview"
+              class="slide-excalidraw-wrap"
               ref={(el) => { if (el) slideRefs.current.set(currentIndex, el); }}
-              aria-label={`Slide ${currentIndex + 1}`}
             >
-              <pre class="scene-json-preview" aria-label="Scene JSON">
-                {JSON.stringify(currentSlide.sceneJSON, null, 2)}
-              </pre>
+              <ExcalidrawViewer
+                slide={currentSlide}
+                viewMode={!pres.canEdit}
+                onChange={pres.canEdit ? handleSceneChange : undefined}
+              />
             </div>
           ) : (
             <div class="empty-state">No slides yet</div>

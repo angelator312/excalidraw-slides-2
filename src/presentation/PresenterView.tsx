@@ -4,6 +4,7 @@ import type { SlideRef } from './slideModel';
 import { rtcClient } from './rtc';
 import type { Presence } from './rtc';
 import { attachPointerListeners } from './laserPointer';
+import { ExcalidrawViewer } from '../components/ExcalidrawViewer';
 
 interface Props {
   slides: SlideRef[];
@@ -145,10 +146,11 @@ export function PresenterView({
             aria-label="Current slide"
           >
             {currentSlide && (
-              <div class="slide-display">
-                <h3 class="slide-title-overlay">{currentSlide.title}</h3>
-                <pre class="scene-preview-sm">{JSON.stringify(currentSlide.sceneJSON?.elements?.length ?? 0)} elements</pre>
-              </div>
+              <ExcalidrawViewer
+                slide={currentSlide}
+                viewMode={true}
+                className="presenter-excalidraw"
+              />
             )}
             {/* Remote laser pointers */}
             {Array.from(remotePointers.entries()).map(([uid, pos]) => (
@@ -190,7 +192,12 @@ export function PresenterView({
             <h4>Next slide</h4>
             {nextSlide ? (
               <div class="slide-thumb-small" aria-label={`Next: ${nextSlide.title}`}>
-                <span>{nextSlide.title}</span>
+                <ExcalidrawViewer
+                  slide={nextSlide}
+                  viewMode={true}
+                  className="presenter-excalidraw-thumb"
+                />
+                <span class="thumb-label">{nextSlide.title}</span>
               </div>
             ) : (
               <p class="text-muted">Last slide</p>

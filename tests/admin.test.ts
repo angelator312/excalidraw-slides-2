@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateLibraryData, MAX_LIBRARY_SIZE_BYTES } from '../server/src/models/library.js';
+import { validateLibraryData, MAX_LIBRARY_SIZE_BYTES } from '../src/lib/libraryValidation';
 import {
   buildImpersonationPayload,
   isImpersonationPayload,
