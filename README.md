@@ -198,3 +198,105 @@ POST /api/auth/accept
 | `cd server && npm run dev` | Start server with hot-reload (port 4000) |
 | `cd server && npm run build` | Compile TypeScript server |
 | `docker compose up -d` | Start full stack |
+
+---
+
+## Admin Features
+
+### Invite Tokens
+
+The owner can create invite tokens that allow new users to register. Tokens support:
+- **Multi-use** — set `maxUses > 1` for team invites (max 100)
+- **Expiry** — configurable in days (default: 7)
+- **Email targeting** — optional, informational only
+- **Revocation** — owner can revoke unused tokens instantly
+
+```
+# Create an invite token
+POST /api/admin/invite
+Authorization: Bearer <owner-token>
+{ "email": "alice@example.com", "expiresInDays": 7, "maxUses": 1 }
+→ { token, link, expiresAt, maxUses }
+
+# Revoke a token
+POST /api/admin/invite/:token/revoke
+Authorization: Bearer <owner-token>
+
+# Accept an invite and create a user account
+POST /api/admin/invite/accept
+{ "token": "...", "username": "alice", "displayName": "Alice" }
+→ { sessionToken, user }
+
+# List all invite tokens
+GET /api/admin/invite
+Authorization: Bearer <owner-token>
+```
+
+### Impersonation
+
+Allows an owner to temporarily act as another user for debugging or support. **Disabled by default in production** — requires `ALLOW_IMPERSONATION=true` in environment.
+
+Every impersonation creates an **audit record** in the `ImpersonationAudit` collection.
+
+```
+# Impersonate a user (returns ephemeral 1-hour JWT)
+POST /api/admin/impersonate/:userId
+Authorization: Bearer <owner-token>
+{ "reason": "debugging support ticket #123" }
+→ { sessionToken, expiresIn: "1h", targetUser }
+
+# View audit log
+GET /api/admin/audit?page=1&limit=50
+Authorization: Bearer <owner-token>
+```
+
+The ephemeral JWT contains an `impersonatedBy` claim identifying the admin. Impersonation tokens:
+- Expire in **1 hour**
+- Cannot be used for further impersonation
+- Do NOT update the target user's `lastSeen` timestamp
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `ALLOW_IMPERSONATION` | `false` | Enable admin impersonation endpoint |
+| `SITE_ORIGIN` | `http://localhost:3000` | Used to construct invite links |
+| `JWT_SECRET` | *(must be set)* | Secret for signing JWTs |
+
+---
+
+## Excalidraw Viewer
+
+Each slide is stored as an Excalidraw scene JSON (`elements` + `appState`). The client
+includes a **read-only viewer** component that lazy-loads `@excalidraw/excalidraw` on demand.
+
+### Libraries
+
+Per-presentation Excalidraw libraries (`.excalidrawlib` JSON files) can be uploaded and applied to the viewer. Libraries are stored in MongoDB and validated against the Excalidraw library schema.
+
+```
+# Upload a library
+POST /api/presentations/:id/libraries
+Authorization: Bearer <token>
+{ "name": "My shapes", "libraryData": { "type": "excalidrawlib", "version": 2, "library": [...] } }
+
+# List libraries (metadata only)
+GET /api/presentations/:id/libraries
+
+# Fetch full library data
+GET /api/presentations/:id/libraries/:libraryId
+
+# Delete a library
+DELETE /api/presentations/:id/libraries/:libraryId
+```
+
+Library size limit: **2 MB** per upload.
+
+### Client Components
+
+- **`ExcalidrawViewer`** — lazy-loads Excalidraw and renders a slide in `viewModeEnabled` (read-only)
+- **`LibraryUploader`** — upload `.excalidrawlib` / `.json` files and list existing libraries
+
+### Vite / Preact Compatibility
+
+`vite.config.ts` aliases `react` and `react-dom` to `preact/compat` so `@excalidraw/excalidraw` works within the Preact app without bundling React separately.

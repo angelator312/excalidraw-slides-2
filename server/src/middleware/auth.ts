@@ -9,6 +9,8 @@ export interface AuthenticatedRequest extends Request {
   user?: IUser;
   /** Role granted via a share link token */
   shareRole?: 'view' | 'edit';
+  /** Present when the JWT is an impersonation token */
+  impersonatedBy?: string;
 }
 
 /**
@@ -25,12 +27,21 @@ export async function optionalAuth(
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
     try {
-      const payload = jwt.verify(token, JWT_SECRET) as { sub: string; role: string };
+      const payload = jwt.verify(token, JWT_SECRET) as {
+        sub: string;
+        role: string;
+        impersonatedBy?: string;
+      };
       const user = await User.findById(payload.sub);
       if (user) {
         req.user = user;
-        user.lastSeen = new Date();
-        void user.save(); // fire-and-forget
+        // Carry impersonation metadata so downstream handlers can inspect it
+        if (payload.impersonatedBy) {
+          req.impersonatedBy = payload.impersonatedBy;
+        } else {
+          user.lastSeen = new Date();
+          void user.save(); // fire-and-forget (skip for impersonation tokens)
+        }
       }
     } catch { /* invalid token — continue as anonymous */ }
   }
@@ -61,6 +72,27 @@ export async function requireAuth(
   await optionalAuth(req, res, () => {});
   if (!req.user) {
     res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  next();
+}
+
+/**
+ * Require the caller to be the owner (DB admin role).
+ * Impersonation tokens are never treated as owner-role requests.
+ */
+export async function requireOwner(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  await optionalAuth(req, res, () => {});
+  if (!req.user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  if (req.user.role !== 'owner' || req.impersonatedBy) {
+    res.status(403).json({ error: 'Owner role required' });
     return;
   }
   next();
