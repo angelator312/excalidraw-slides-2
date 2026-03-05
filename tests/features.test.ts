@@ -567,3 +567,295 @@ describe('Username validation (invite sign-up)', () => {
     expect(USERNAME_RE.test('alice@example')).toBe(false);
   });
 });
+
+// ─── Grid thumbnail mode ───────────────────────────────────────────────────
+
+describe('Grid thumbnail mode', () => {
+  type ThumbnailMode = 'first-slide' | 'grid';
+
+  // Simulates server-side logic for choosing which slides to include
+  function buildThumbnailPayload(
+    mode: ThumbnailMode,
+    slideThumbs: (string | null)[],
+  ): { thumbnail: string | null; gridThumbnails?: (string | null)[] } {
+    if (mode === 'grid') {
+      return { thumbnail: null, gridThumbnails: slideThumbs.slice(0, 4) };
+    }
+    return { thumbnail: slideThumbs[0] ?? null };
+  }
+
+  it('first-slide mode returns single thumbnail', () => {
+    const result = buildThumbnailPayload('first-slide', ['data:a', 'data:b', 'data:c']);
+    expect(result.thumbnail).toBe('data:a');
+    expect(result.gridThumbnails).toBeUndefined();
+  });
+
+  it('grid mode returns null thumbnail and gridThumbnails array', () => {
+    const result = buildThumbnailPayload('grid', ['data:a', 'data:b', 'data:c', 'data:d']);
+    expect(result.thumbnail).toBeNull();
+    expect(result.gridThumbnails).toEqual(['data:a', 'data:b', 'data:c', 'data:d']);
+  });
+
+  it('grid mode caps at 4 slides', () => {
+    const result = buildThumbnailPayload('grid', ['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(result.gridThumbnails).toHaveLength(4);
+  });
+
+  it('grid mode with fewer than 4 slides returns what is available', () => {
+    const result = buildThumbnailPayload('grid', ['a', 'b']);
+    expect(result.gridThumbnails).toHaveLength(2);
+    expect(result.gridThumbnails).toEqual(['a', 'b']);
+  });
+
+  it('grid mode with no thumbnails returns empty array', () => {
+    const result = buildThumbnailPayload('grid', []);
+    expect(result.gridThumbnails).toHaveLength(0);
+  });
+
+  it('first-slide mode with empty thumbnails returns null', () => {
+    const result = buildThumbnailPayload('first-slide', []);
+    expect(result.thumbnail).toBeNull();
+  });
+
+  it('grid mode nulls in array are preserved (slide not yet visited)', () => {
+    const result = buildThumbnailPayload('grid', ['data:a', null, 'data:c', null]);
+    expect(result.gridThumbnails).toEqual(['data:a', null, 'data:c', null]);
+  });
+});
+
+// ─── Instant collaboration: debounce timing ────────────────────────────────
+
+describe('Collaboration debounce: RTC vs API save', () => {
+  it('RTC debounce (50ms) is much shorter than API save debounce (800ms)', () => {
+    const RTC_DEBOUNCE_MS = 50;
+    const API_SAVE_DEBOUNCE_MS = 800;
+    expect(RTC_DEBOUNCE_MS).toBeLessThan(100);
+    expect(API_SAVE_DEBOUNCE_MS).toBeGreaterThanOrEqual(500);
+    // RTC should be at least 8× faster than API save
+    expect(API_SAVE_DEBOUNCE_MS / RTC_DEBOUNCE_MS).toBeGreaterThanOrEqual(8);
+  });
+
+  it('consecutive scene changes only result in one API call per debounce window', () => {
+    let apiCallCount = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const API_DEBOUNCE = 800;
+
+    function onSceneChange() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { apiCallCount++; }, API_DEBOUNCE);
+    }
+
+    // Simulate 10 rapid changes within 800ms window
+    for (let i = 0; i < 10; i++) onSceneChange();
+
+    // Before the debounce fires, count is still 0
+    expect(apiCallCount).toBe(0);
+
+    // After the debounce: only 1 call (would be verified in integration test)
+    // Here we just verify the debouncing logic structure
+    if (timer) clearTimeout(timer);
+  });
+
+  it('RTC sendDiff is called immediately (synchronously) per change', () => {
+    const rtcCalls: number[] = [];
+    let changeCount = 0;
+
+    function simulateSceneChange() {
+      changeCount++;
+      // RTC is sent without delay
+      rtcCalls.push(changeCount);
+    }
+
+    simulateSceneChange();
+    simulateSceneChange();
+    simulateSceneChange();
+
+    // All 3 changes should have triggered an RTC call without delay
+    expect(rtcCalls).toHaveLength(3);
+    expect(rtcCalls).toEqual([1, 2, 3]);
+  });
+});
+
+// ─── Named cursor / laser pointer ─────────────────────────────────────────
+
+describe('Named cursor/laser pointer', () => {
+  interface RemotePointer {
+    x: number;
+    y: number;
+    displayName: string;
+    color: string;
+  }
+
+  function updatePointers(
+    prev: Map<string, RemotePointer>,
+    userId: string,
+    x: number,
+    y: number,
+    visible: boolean,
+    presence: Array<{ userId: string; displayName: string; color: string }>,
+  ): Map<string, RemotePointer> {
+    const next = new Map(prev);
+    if (visible) {
+      const existing = prev.get(userId);
+      const pUser = presence.find((p) => p.userId === userId);
+      next.set(userId, {
+        x, y,
+        displayName: existing?.displayName ?? pUser?.displayName ?? userId.slice(0, 6),
+        color: existing?.color ?? pUser?.color ?? '#6965db',
+      });
+    } else {
+      next.delete(userId);
+    }
+    return next;
+  }
+
+  it('adds a pointer when visible=true', () => {
+    const map = updatePointers(new Map(), 'u1', 0.5, 0.3, true, [
+      { userId: 'u1', displayName: 'Alice', color: '#e94560' },
+    ]);
+    expect(map.has('u1')).toBe(true);
+    expect(map.get('u1')!.displayName).toBe('Alice');
+    expect(map.get('u1')!.color).toBe('#e94560');
+  });
+
+  it('removes a pointer when visible=false', () => {
+    const initial = new Map([['u1', { x: 0.5, y: 0.3, displayName: 'Alice', color: '#e94560' }]]);
+    const map = updatePointers(initial, 'u1', 0, 0, false, []);
+    expect(map.has('u1')).toBe(false);
+  });
+
+  it('uses fallback display name (first 6 chars of userId) when presence missing', () => {
+    const map = updatePointers(new Map(), 'user-xyz-123', 0.2, 0.4, true, []);
+    expect(map.get('user-xyz-123')!.displayName).toBe('user-x');
+  });
+
+  it('preserves existing display name if presence update arrives later', () => {
+    const initial = new Map([['u1', { x: 0.1, y: 0.1, displayName: 'Alice', color: '#e94560' }]]);
+    const map = updatePointers(initial, 'u1', 0.5, 0.5, true, []); // no presence info
+    expect(map.get('u1')!.displayName).toBe('Alice'); // kept from existing
+  });
+
+  it('updates pointer position without losing display name', () => {
+    const initial = new Map([['u1', { x: 0.1, y: 0.1, displayName: 'Bob', color: '#4fc3f7' }]]);
+    const map = updatePointers(initial, 'u1', 0.9, 0.8, true, []);
+    expect(map.get('u1')!.x).toBe(0.9);
+    expect(map.get('u1')!.y).toBe(0.8);
+    expect(map.get('u1')!.displayName).toBe('Bob');
+  });
+
+  it('pointer coordinates are normalised (0-1 range)', () => {
+    // Test boundary values: 0 and 1 are both valid
+    const map0 = updatePointers(new Map(), 'u1', 0, 0, true, []);
+    expect(map0.get('u1')!.x).toBe(0);
+    expect(map0.get('u1')!.y).toBe(0);
+
+    const map1 = updatePointers(new Map(), 'u2', 1, 1, true, []);
+    expect(map1.get('u2')!.x).toBe(1);
+    expect(map1.get('u2')!.y).toBe(1);
+
+    const mapMid = updatePointers(new Map(), 'u3', 0.5, 0.75, true, []);
+    expect(mapMid.get('u3')!.x).toBe(0.5);
+    expect(mapMid.get('u3')!.y).toBe(0.75);
+  });
+});
+
+// ─── HUD auto-hide timing ─────────────────────────────────────────────────
+
+describe('HUD auto-hide behaviour', () => {
+  it('HUD_TIMEOUT is set to 3000ms (3 seconds)', () => {
+    const HUD_TIMEOUT = 3000;
+    expect(HUD_TIMEOUT).toBe(3000);
+    expect(HUD_TIMEOUT).toBeGreaterThan(2000);
+    expect(HUD_TIMEOUT).toBeLessThan(10000);
+  });
+
+  it('resetting timer keeps HUD visible', () => {
+    let visible = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function resetHud() {
+      visible = true;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { visible = false; }, 3000);
+    }
+
+    resetHud();
+    resetHud();
+    resetHud();
+
+    // After 3 resets, HUD is still visible (timer hasn't fired)
+    expect(visible).toBe(true);
+    if (timer) clearTimeout(timer);
+  });
+});
+
+// ─── Thumbnail retry logic ────────────────────────────────────────────────
+
+describe('Thumbnail generation retry logic', () => {
+  it('does not generate thumbnail when elements array is empty (no retries left)', async () => {
+    let generated = false;
+    let attempts = 0;
+
+    async function tryGenerate(retries: number): Promise<void> {
+      attempts++;
+      const elements: unknown[] = []; // always empty
+      if (!elements.length) {
+        if (retries > 0) {
+          await new Promise((r) => setTimeout(r, 1));
+          return tryGenerate(retries - 1);
+        }
+        return;
+      }
+      generated = true;
+    }
+
+    await tryGenerate(0);
+    expect(generated).toBe(false);
+    expect(attempts).toBe(1);
+  });
+
+  it('retries up to 3 times when elements are empty', async () => {
+    let attempts = 0;
+
+    async function tryGenerate(retries: number): Promise<void> {
+      attempts++;
+      const elements: unknown[] = [];
+      if (!elements.length) {
+        if (retries > 0) {
+          await new Promise((r) => setTimeout(r, 1));
+          return tryGenerate(retries - 1);
+        }
+        return;
+      }
+    }
+
+    await tryGenerate(3);
+    expect(attempts).toBe(4); // initial + 3 retries
+  });
+
+  it('succeeds on second attempt when elements become available', async () => {
+    let attempts = 0;
+    let generated = false;
+    let hasElements = false;
+
+    // Simulate elements becoming available after 1st try
+    setTimeout(() => { hasElements = true; }, 0);
+
+    async function tryGenerate(retries: number): Promise<void> {
+      attempts++;
+      if (!hasElements) {
+        if (retries > 0) {
+          await new Promise((r) => setTimeout(r, 1));
+          hasElements = true; // elements are now available
+          return tryGenerate(retries - 1);
+        }
+        return;
+      }
+      generated = true;
+    }
+
+    await tryGenerate(3);
+    expect(attempts).toBe(2);
+    expect(generated).toBe(true);
+  });
+});

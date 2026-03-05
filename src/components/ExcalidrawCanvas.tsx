@@ -219,30 +219,43 @@ export default function ExcalidrawCanvas({
   useEffect(() => {
     if (!excalidrawAPI || !slide?.id || !onThumbnailChange) return;
     const slideId = slide.id;
-    const timer = setTimeout(async () => {
+    let cancelled = false;
+
+    // Helper: try to generate a thumbnail. Retries up to `retries` times if
+    // the scene is still empty (canvas hasn't finished rendering yet).
+    const tryGenerate = async (retries: number): Promise<void> => {
+      if (cancelled) return;
+      const elements = excalidrawAPI.getSceneElements();
+      if (!elements.length) {
+        if (retries > 0) {
+          await new Promise((r) => setTimeout(r, 400));
+          return tryGenerate(retries - 1);
+        }
+        return; // give up — slide really is empty
+      }
+      const appState = excalidrawAPI.getAppState();
+      const files = excalidrawAPI.getFiles();
       try {
-        const elements = excalidrawAPI.getSceneElements();
-        if (!elements.length) return;
-        const appState = excalidrawAPI.getAppState();
-        const files = excalidrawAPI.getFiles();
         const blob = await exportToBlob({
           elements: [...elements],
           appState: { ...appState, exportBackground: true, exportWithDarkMode: false } as AppState,
           files,
           mimeType: 'image/jpeg',
-          quality: 0.5,
-          scale: 0.3,
+          quality: 0.6,
+          scale: 0.4,
         });
-        // Convert to base64 for server persistence
+        if (cancelled) return;
         const reader = new FileReader();
         reader.onloadend = () => {
-          const dataUrl = reader.result as string;
-          onThumbnailChange(slideId, dataUrl);
+          if (!cancelled) onThumbnailChange(slideId, reader.result as string);
         };
         reader.readAsDataURL(blob);
       } catch { /* non-critical */ }
-    }, 800);
-    return () => clearTimeout(timer);
+    };
+
+    // Short initial delay so the scene has time to render
+    const timer = setTimeout(() => void tryGenerate(3), 600);
+    return () => { cancelled = true; clearTimeout(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excalidrawAPI, slide?.id]);
 
@@ -264,14 +277,19 @@ export default function ExcalidrawCanvas({
     if (fp === lastElementsFpRef.current) return;
     lastElementsFpRef.current = fp;
 
+    // Capture snapshot for thumbnail generation (before setTimeout closure)
+    const elementsSnap = [...elements];
+    const appStateSnap = appState;
+    const filesSnap = files;
+
     if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
     changeTimerRef.current = setTimeout(() => {
       const scene: ExcalidrawScene = {
         type: 'excalidraw',
         version: 2,
-        elements: [...elements] as ExcalidrawScene['elements'],
-        appState: appState as ExcalidrawScene['appState'],
-        files: files as ExcalidrawScene['files'],
+        elements: elementsSnap as ExcalidrawScene['elements'],
+        appState: appStateSnap as ExcalidrawScene['appState'],
+        files: filesSnap as ExcalidrawScene['files'],
       };
       onChange(scene);
 
@@ -282,19 +300,21 @@ export default function ExcalidrawCanvas({
         thumbTimerRef.current = setTimeout(async () => {
           try {
             const blob = await exportToBlob({
-              elements: [...elements],
-              appState: { ...appState, exportBackground: true, exportWithDarkMode: false } as AppState,
-              files,
-              mimeType: 'image/png',
-              quality: 0.8,
-              scale: 0.5,
+              elements: elementsSnap,
+              appState: { ...appStateSnap, exportBackground: true, exportWithDarkMode: false } as AppState,
+              files: filesSnap,
+              mimeType: 'image/jpeg',
+              quality: 0.6,
+              scale: 0.4,
             });
-            const url = URL.createObjectURL(blob);
-            onThumbnailChange(slideId, url);
+            const reader = new FileReader();
+            reader.onloadend = () => onThumbnailChange(slideId, reader.result as string);
+            reader.readAsDataURL(blob);
           } catch { /* non-critical */ }
-        }, 1500);
+        }, 1200);
       }
-    }, 800);
+    }, 50); // 50ms debounce — fires onChange which triggers RTC broadcast;
+           // API saves are debounced separately at 800ms in PresentationEditor
   };
 
   if (!slide) {

@@ -27,26 +27,56 @@ router.get('/', optionalAuth, async (req: AuthenticatedRequest, res) => {
   const owners = await User.find({ _id: { $in: ownerIds } }).select('username').lean();
   const ownerMap = new Map(owners.map((o) => [o._id.toString(), o.username]));
 
-  // Fetch first slide thumbnail for each presentation
   const presIds = presentations.map((p) => p._id);
-  const firstSlides = await Slide.find({ presentationId: { $in: presIds }, index: 0 })
+
+  // Separate presentations by thumbnailMode
+  const gridPresIds = presentations
+    .filter((p) => (p.thumbnailMode ?? 'first-slide') === 'grid')
+    .map((p) => p._id);
+  const firstSlidePresIds = presentations
+    .filter((p) => (p.thumbnailMode ?? 'first-slide') !== 'grid')
+    .map((p) => p._id);
+
+  // For first-slide mode: fetch only index=0 slides
+  const firstSlides = await Slide.find({ presentationId: { $in: firstSlidePresIds }, index: 0 })
     .select('presentationId thumbnail')
     .lean();
   const thumbMap = new Map(
     firstSlides.map((s) => [s.presentationId.toString(), s.thumbnail ?? null]),
   );
 
-  const result = presentations.map((p) => ({
-    _id: p._id,
-    title: p.title,
-    visibility: p.visibility,
-    ownerUsername: ownerMap.get(p.ownerUserId.toString()) ?? 'unknown',
-    slideCount: p.slideCount,
-    updatedAt: p.updatedAt,
-    canEdit: userId ? userCanEdit(p, userId.toString()) : false,
-    thumbnailMode: p.thumbnailMode ?? 'first-slide',
-    thumbnail: thumbMap.get(p._id.toString()) ?? null,
-  }));
+  // For grid mode: fetch up to 4 slides per presentation, ordered by index
+  const gridSlides = gridPresIds.length > 0
+    ? await Slide.find({ presentationId: { $in: gridPresIds }, index: { $lt: 4 } })
+        .select('presentationId index thumbnail')
+        .sort({ index: 1 })
+        .lean()
+    : [];
+  // Group grid slide thumbnails by presentationId
+  const gridThumbMap = new Map<string, (string | null)[]>();
+  for (const s of gridSlides) {
+    const key = s.presentationId.toString();
+    if (!gridThumbMap.has(key)) gridThumbMap.set(key, []);
+    gridThumbMap.get(key)!.push(s.thumbnail ?? null);
+  }
+
+  const result = presentations.map((p) => {
+    const mode = p.thumbnailMode ?? 'first-slide';
+    const pKey = p._id.toString();
+    return {
+      _id: p._id,
+      title: p.title,
+      visibility: p.visibility,
+      ownerUsername: ownerMap.get(p.ownerUserId.toString()) ?? 'unknown',
+      slideCount: p.slideCount,
+      updatedAt: p.updatedAt,
+      canEdit: userId ? userCanEdit(p, userId.toString()) : false,
+      thumbnailMode: mode,
+      // first-slide mode: single thumbnail string; grid mode: array of up to 4 thumbnails
+      thumbnail: mode === 'grid' ? null : (thumbMap.get(pKey) ?? null),
+      gridThumbnails: mode === 'grid' ? (gridThumbMap.get(pKey) ?? []) : undefined,
+    };
+  });
 
   res.json(result);
 });

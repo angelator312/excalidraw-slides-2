@@ -14,6 +14,8 @@ export interface Presentation {
   thumbnailMode?: 'first-slide' | 'grid';
   /** Base64 data URL of the first slide thumbnail (null = no thumbnail yet) */
   thumbnail?: string | null;
+  /** Up to 4 slide thumbnails for grid mode */
+  gridThumbnails?: (string | null)[];
 }
 
 interface Props {
@@ -92,7 +94,23 @@ export function PresentationList({ onOpen }: Props) {
                 aria-label={`Open "${p.title}"`}
               >
                 <div class="pres-card-thumb" aria-hidden="true">
-                  {p.thumbnail ? (
+                  {p.thumbnailMode === 'grid' ? (
+                    <div class="pres-thumb-grid">
+                      {(p.gridThumbnails ?? [null, null, null, null]).slice(0, 4).map((t, idx) => (
+                        <div key={idx} class="pres-thumb-grid-cell">
+                          {t ? (
+                            <img src={t} alt="" class="pres-thumb-grid-img" loading="lazy" />
+                          ) : (
+                            <svg viewBox="0 0 120 67" fill="none" width="100%" height="100%">
+                              <rect width="120" height="67" fill="#f0efff"/>
+                              <rect x="10" y="20" width="40" height="5" rx="2" fill="#c4c3f0"/>
+                              <rect x="10" y="30" width="60" height="4" rx="2" fill="#dddcf8"/>
+                            </svg>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : p.thumbnail ? (
                     <img
                       src={p.thumbnail}
                       alt=""

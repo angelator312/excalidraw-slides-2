@@ -9,6 +9,7 @@ import { SettingsModal } from '../presentation/SettingsModal';
 import { ExportModal } from '../presentation/ExportModal';
 import { ExcalidrawViewer } from './ExcalidrawViewer';
 import { rtcClient } from '../presentation/rtc';
+import type { Presence } from '../presentation/rtc';
 import { useAuth } from '../hooks/useAuth';
 
 interface Props {
@@ -43,9 +44,18 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
   /** Incremented whenever a remote diff is received to trigger ExcalidrawCanvas update */
   const [remoteVersion, setRemoteVersion] = useState(0);
+  /** Live presence (collaborators) in this presentation */
+  const [presence, setPresence] = useState<Presence[]>([]);
+  /** Ref to latest presence so pointer handlers can look up display names without a stale closure */
+  const presenceRef = useRef<Presence[]>([]);
+  presenceRef.current = presence;
+  /** Remote pointer positions (userId → {x, y, displayName, color}) for cursor overlay in editor */
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; displayName: string; color: string }>>(new Map());
 
   const slideRefs = useRef<Map<number, HTMLElement>>(new Map());
   const thumbPersistTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  /** Debounced API save timer — keyed by slideId so rapid edits don't flood the server */
+  const apiSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Close panel on Escape
   useEffect(() => {
@@ -80,7 +90,43 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         // Increment remoteVersion so ExcalidrawCanvas picks up the new elements
         setRemoteVersion((v) => v + 1);
       }),
+      rtcClient.on('presence', (users) => {
+        setPresence(users);
+      }),
+      rtcClient.on('pointerMove', ({ userId, x, y, visible }) => {
+        // Update cursor position for the collaborator overlay in the editor
+        setRemoteCursors((prev) => {
+          const next = new Map(prev);
+          if (visible) {
+            const existing = prev.get(userId);
+            // Look up the user's display name from the current presence list
+            const pUser = presenceRef.current.find((u) => u.userId === userId);
+            next.set(userId, {
+              x, y,
+              displayName: existing?.displayName ?? pUser?.displayName ?? userId.slice(0, 6),
+              color: existing?.color ?? pUser?.color ?? '#6965db',
+            });
+          } else {
+            next.delete(userId);
+          }
+          return next;
+        });
+      }),
     ];
+    // Sync pointer cursor display names from presence updates
+    const presenceSub = rtcClient.on('presence', (users) => {
+      setRemoteCursors((prev) => {
+        const next = new Map(prev);
+        for (const [uid, cursor] of prev.entries()) {
+          const found = users.find((u) => u.userId === uid);
+          if (found) {
+            next.set(uid, { ...cursor, displayName: found.displayName, color: found.color });
+          }
+        }
+        return next;
+      });
+    });
+    unsubs.push(presenceSub);
     return () => {
       unsubs.forEach((u) => u());
       rtcClient.disconnect();
@@ -131,6 +177,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
     const slide = pres.slides[currentIndex];
     if (!slide) return;
 
+    // 1. Update local state immediately (no wait)
     setPres((prev) => {
       if (!prev) return prev;
       const slides = prev.slides.map((s, i) =>
@@ -139,16 +186,23 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
       return { ...prev, slides };
     });
 
+    // 2. Broadcast via RTC immediately for instant collaboration
     rtcClient.sendDiff(slide.id, sceneJSON);
 
-    try {
-      await apiFetch(`/api/presentations/${presentationId}/slides/${slide.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ sceneJSON }),
-      });
-    } catch {
-      // non-critical
-    }
+    // 3. Debounce API save at 800 ms to avoid flooding the server on rapid strokes
+    if (apiSaveTimer.current) clearTimeout(apiSaveTimer.current);
+    const slideIdForSave = slide.id;
+    const sceneForSave = sceneJSON;
+    apiSaveTimer.current = setTimeout(async () => {
+      try {
+        await apiFetch(`/api/presentations/${presentationId}/slides/${slideIdForSave}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ sceneJSON: sceneForSave }),
+        });
+      } catch {
+        // non-critical
+      }
+    }, 800);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pres, currentIndex, presentationId]);
 
@@ -291,6 +345,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
             <div
               class="slide-excalidraw-wrap"
               ref={(el) => { if (el) slideRefs.current.set(currentIndex, el); }}
+              style={{ position: 'relative' }}
             >
               <ExcalidrawViewer
                 slide={currentSlide}
@@ -301,6 +356,24 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
                 previewScene={previewScene}
                 remoteVersion={remoteVersion}
               />
+              {/* Collaborator cursor overlay */}
+              {remoteCursors.size > 0 && Array.from(remoteCursors.entries()).map(([uid, cur]) => (
+                <div
+                  key={uid}
+                  class="collab-cursor"
+                  style={{
+                    left: `${cur.x * 100}%`,
+                    top: `${cur.y * 100}%`,
+                    '--cursor-color': cur.color,
+                  } as Record<string, string>}
+                  aria-hidden="true"
+                >
+                  <svg width="16" height="20" viewBox="0 0 16 20" fill="none">
+                    <path d="M0 0 L0 16 L4 12 L7 18 L9 17 L6 11 L12 11 Z" fill={cur.color} stroke="white" stroke-width="1"/>
+                  </svg>
+                  <span class="collab-cursor-label">{cur.displayName}</span>
+                </div>
+              ))}
             </div>
           ) : (
             <div class="empty-state">No slides yet. Add one in the panel on the left.</div>
