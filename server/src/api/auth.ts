@@ -132,6 +132,47 @@ router.post('/anonymous', async (req, res) => {
 });
 
 /**
+ * POST /api/auth/signin
+ * Sign in with a long-lived auth token (the JWT returned after sign-up).
+ * Verifies the token and returns the user. This supports both:
+ *   - The original session JWT (short-lived, 30d)
+ *   - The long-lived "auth token" given after sign-up (365d)
+ */
+router.post('/signin', async (req, res) => {
+  const { authToken } = req.body as { authToken?: string };
+  if (!authToken?.trim()) {
+    res.status(400).json({ error: 'authToken is required' });
+    return;
+  }
+
+  let payload: { sub: string; role: string };
+  try {
+    payload = jwt.verify(authToken.trim(), JWT_SECRET) as { sub: string; role: string };
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired auth token' });
+    return;
+  }
+
+  const user = await User.findById(payload.sub);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  // Issue a fresh session JWT so the user is logged in
+  const sessionToken = jwt.sign(
+    { sub: user._id.toString(), role: user.role },
+    JWT_SECRET,
+    { expiresIn: '30d' },
+  );
+
+  res.json({
+    sessionToken,
+    user: { _id: user._id, username: user.username, displayName: user.displayName, role: user.role },
+  });
+});
+
+/**
  * GET /api/auth/me
  * Return the current authenticated user.
  */

@@ -110,6 +110,19 @@ export function AdminPage({ onBack }: Props) {
     }
   };
 
+  const changeRole = async (userId: string, newRole: string, username: string) => {
+    if (!confirm(`Change ${username}'s role to "${newRole}"?`)) return;
+    try {
+      const updated = await apiFetch<UserItem>(`/api/admin/users/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role: newRole }),
+      });
+      setUsers((prev) => prev.map((u) => (u._id === userId ? { ...u, role: updated.role } : u)));
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Failed to change role');
+    }
+  };
+
   const copyLink = async (link: string) => {
     try {
       await navigator.clipboard.writeText(link);
@@ -304,17 +317,39 @@ export function AdminPage({ onBack }: Props) {
                     <th>Display name</th>
                     <th>Role</th>
                     <th>Joined</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
-                    <tr key={u._id} class={u._id === user?._id ? 'current-user-row' : ''}>
-                      <td><code class="username-code">{u.username}</code></td>
-                      <td>{u.displayName}</td>
-                      <td><span class={`role-badge role-${u.role}`}>{u.role}</span></td>
-                      <td>{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</td>
-                    </tr>
-                  ))}
+                  {users.map((u) => {
+                    const isSelf = u._id === user?._id;
+                    return (
+                      <tr key={u._id} class={isSelf ? 'current-user-row' : ''}>
+                        <td><code class="username-code">{u.username}</code></td>
+                        <td>{u.displayName}</td>
+                        <td><span class={`role-badge role-${u.role}`}>{u.role}</span></td>
+                        <td>{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '—'}</td>
+                        <td>
+                          {!isSelf && (
+                            <select
+                              class="role-select"
+                              value={u.role}
+                              title={`Change role for ${u.username}`}
+                              aria-label={`Change role for ${u.username}`}
+                              onChange={(e) => {
+                                const newRole = (e.target as HTMLSelectElement).value;
+                                if (newRole !== u.role) void changeRole(u._id, newRole, u.username);
+                              }}
+                            >
+                              <option value="user">user</option>
+                              <option value="owner">owner</option>
+                            </select>
+                          )}
+                          {isSelf && <span class="text-muted" style="font-size:0.75rem">you</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

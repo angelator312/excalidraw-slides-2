@@ -7,6 +7,8 @@ export interface ISlide extends Document {
   title: string;
   sceneJSON: Record<string, unknown>;
   notes: string;
+  /** Base64 data URL of the slide thumbnail (generated client-side, persisted for list views) */
+  thumbnail?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -18,6 +20,7 @@ const SlideSchema = new Schema<ISlide>(
     title: { type: String, default: '', maxlength: 200 },
     sceneJSON: { type: Schema.Types.Mixed, default: { type: 'excalidraw', version: 2, elements: [] } },
     notes: { type: String, default: '' },
+    thumbnail: { type: String },
   },
   { timestamps: true },
 );

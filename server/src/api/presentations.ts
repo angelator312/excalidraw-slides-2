@@ -27,6 +27,15 @@ router.get('/', optionalAuth, async (req: AuthenticatedRequest, res) => {
   const owners = await User.find({ _id: { $in: ownerIds } }).select('username').lean();
   const ownerMap = new Map(owners.map((o) => [o._id.toString(), o.username]));
 
+  // Fetch first slide thumbnail for each presentation
+  const presIds = presentations.map((p) => p._id);
+  const firstSlides = await Slide.find({ presentationId: { $in: presIds }, index: 0 })
+    .select('presentationId thumbnail')
+    .lean();
+  const thumbMap = new Map(
+    firstSlides.map((s) => [s.presentationId.toString(), s.thumbnail ?? null]),
+  );
+
   const result = presentations.map((p) => ({
     _id: p._id,
     title: p.title,
@@ -36,6 +45,7 @@ router.get('/', optionalAuth, async (req: AuthenticatedRequest, res) => {
     updatedAt: p.updatedAt,
     canEdit: userId ? userCanEdit(p, userId.toString()) : false,
     thumbnailMode: p.thumbnailMode ?? 'first-slide',
+    thumbnail: thumbMap.get(p._id.toString()) ?? null,
   }));
 
   res.json(result);
@@ -296,10 +306,11 @@ router.patch('/:id/slides/:slideId', requireAuth, async (req: AuthenticatedReque
   const slide = await Slide.findOne({ _id: req.params['slideId'], presentationId: pres._id });
   if (!slide) { res.status(404).json({ error: 'Slide not found' }); return; }
 
-  const { sceneJSON, notes, title } = req.body as {
+  const { sceneJSON, notes, title, thumbnail } = req.body as {
     sceneJSON?: Record<string, unknown>;
     notes?: string;
     title?: string;
+    thumbnail?: string;
   };
 
   // Save auto-version before overwriting — only when elements actually changed
@@ -317,6 +328,15 @@ router.patch('/:id/slides/:slideId', requireAuth, async (req: AuthenticatedReque
   }
   if (notes !== undefined) slide.notes = notes;
   if (title !== undefined) slide.title = title;
+  // thumbnail is a base64 data URL capped at ~100KB to keep MongoDB lean
+  if (thumbnail !== undefined) {
+    const MAX_THUMB_SIZE = 100 * 1024; // 100KB
+    if (thumbnail.length > MAX_THUMB_SIZE) {
+      res.status(400).json({ error: `thumbnail exceeds maximum size of ${MAX_THUMB_SIZE} bytes` });
+      return;
+    }
+    slide.thumbnail = thumbnail;
+  }
   await slide.save();
 
   res.json({

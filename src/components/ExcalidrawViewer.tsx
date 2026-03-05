@@ -25,6 +25,11 @@ export interface ExcalidrawViewerProps {
   className?: string;
   /** When set, temporarily display this scene (history hover preview) */
   previewScene?: ExcalidrawScene | null;
+  /**
+   * Increment to force scene refresh when slide content changes from an external
+   * source (remote WebSocket diff) without slide.id changing.
+   */
+  remoteVersion?: number;
 }
 
 /**

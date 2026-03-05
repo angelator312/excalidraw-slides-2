@@ -43,6 +43,11 @@ export interface ExcalidrawCanvasProps {
   className?: string;
   /** When set, temporarily display this scene (history hover preview) */
   previewScene?: ExcalidrawScene | null;
+  /**
+   * Increment this to force a scene refresh when the slide content changes
+   * from an external source (e.g. a remote WebSocket diff) without slide.id changing.
+   */
+  remoteVersion?: number;
 }
 
 /** Compute a fast fingerprint of an elements array (id + version pairs). */
@@ -87,6 +92,7 @@ export default function ExcalidrawCanvas({
   presentationId,
   className,
   previewScene,
+  remoteVersion = 0,
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawImperativeAPI | null>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
@@ -163,7 +169,25 @@ export default function ExcalidrawCanvas({
     }
 
     if (!slide) return;
+
+    const incomingElements = slide.sceneJSON?.elements ?? [];
+    const incomingFp = fingerprintElements(incomingElements);
+
     if (renderedSlideIdRef.current === slide.id && !inPreviewRef.current) {
+      // Same slide — check if elements changed from a remote diff
+      if (incomingFp !== lastElementsFpRef.current) {
+        // Remote change: update elements without triggering local onChange
+        lastElementsFpRef.current = incomingFp;
+        excalidrawAPI.updateScene({
+          elements: incomingElements,
+          appState: { viewModeEnabled: viewMode, zenModeEnabled: false },
+          captureUpdate: CaptureUpdateAction.NEVER,
+        });
+        requestAnimationFrame(() => {
+          apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false });
+        });
+        return;
+      }
       excalidrawAPI.updateScene({
         appState: { viewModeEnabled: viewMode, zenModeEnabled: false },
         captureUpdate: CaptureUpdateAction.NEVER,
@@ -172,10 +196,10 @@ export default function ExcalidrawCanvas({
     }
     renderedSlideIdRef.current = slide.id;
     // Seed the elements fingerprint to avoid a spurious onChange on first load
-    lastElementsFpRef.current = fingerprintElements(slide.sceneJSON?.elements ?? []);
+    lastElementsFpRef.current = incomingFp;
 
     excalidrawAPI.updateScene({
-      elements: slide.sceneJSON?.elements ?? [],
+      elements: incomingElements,
       appState: {
         ...(slide.sceneJSON?.appState ?? {}),
         viewModeEnabled: viewMode,
@@ -189,7 +213,38 @@ export default function ExcalidrawCanvas({
       apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [excalidrawAPI, slide?.id, viewMode, previewScene]);
+  }, [excalidrawAPI, slide?.id, viewMode, previewScene, remoteVersion]);
+
+  // Generate thumbnail after slide loads (even in view mode, for dashboard cards)
+  useEffect(() => {
+    if (!excalidrawAPI || !slide?.id || !onThumbnailChange) return;
+    const slideId = slide.id;
+    const timer = setTimeout(async () => {
+      try {
+        const elements = excalidrawAPI.getSceneElements();
+        if (!elements.length) return;
+        const appState = excalidrawAPI.getAppState();
+        const files = excalidrawAPI.getFiles();
+        const blob = await exportToBlob({
+          elements: [...elements],
+          appState: { ...appState, exportBackground: true, exportWithDarkMode: false } as AppState,
+          files,
+          mimeType: 'image/jpeg',
+          quality: 0.5,
+          scale: 0.3,
+        });
+        // Convert to base64 for server persistence
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          onThumbnailChange(slideId, dataUrl);
+        };
+        reader.readAsDataURL(blob);
+      } catch { /* non-critical */ }
+    }, 800);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [excalidrawAPI, slide?.id]);
 
   // Cleanup debounce timers on unmount
   useEffect(() => () => {

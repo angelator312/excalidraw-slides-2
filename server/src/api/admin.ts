@@ -171,8 +171,16 @@ router.post('/invite/accept', async (req, res) => {
     { expiresIn: '30d' },
   );
 
+  // Also issue a long-lived auth token (365d) that the user can paste to sign in later
+  const longLivedToken = jwt.sign(
+    { sub: user._id.toString(), role: user.role },
+    JWT_SECRET,
+    { expiresIn: '365d' },
+  );
+
   res.status(201).json({
     sessionToken,
+    authToken: longLivedToken,
     user: {
       _id: user._id,
       username: user.username,
@@ -192,6 +200,45 @@ router.get('/invite', requireOwner, async (_req, res) => {
     .limit(200)
     .lean();
   res.json(tokens);
+});
+
+/**
+ * PATCH /api/admin/users/:id/role
+ * Change a user's role (owner only). Cannot change own role.
+ */
+router.patch('/users/:id/role', requireOwner, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.body as { role?: string };
+  const allowedRoles = ['owner', 'user'];
+  if (!role || !allowedRoles.includes(role)) {
+    res.status(400).json({ error: `role must be one of: ${allowedRoles.join(', ')}` });
+    return;
+  }
+
+  const targetUser = await User.findById(req.params['id']);
+  if (!targetUser) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  if (targetUser.role === 'anonymous') {
+    res.status(400).json({ error: 'Cannot change role of anonymous users' });
+    return;
+  }
+
+  if (req.user!._id.toString() === targetUser._id.toString()) {
+    res.status(400).json({ error: 'You cannot change your own role' });
+    return;
+  }
+
+  targetUser.role = role as 'owner' | 'user';
+  await targetUser.save();
+
+  res.json({
+    _id: targetUser._id,
+    username: targetUser.username,
+    displayName: targetUser.displayName,
+    role: targetUser.role,
+  });
 });
 
 /**

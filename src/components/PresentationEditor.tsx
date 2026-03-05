@@ -41,8 +41,11 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   const [previewScene, setPreviewScene] = useState<ExcalidrawScene | null | undefined>(undefined);
   /** slideId → PNG thumbnail data URL */
   const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
+  /** Incremented whenever a remote diff is received to trigger ExcalidrawCanvas update */
+  const [remoteVersion, setRemoteVersion] = useState(0);
 
   const slideRefs = useRef<Map<number, HTMLElement>>(new Map());
+  const thumbPersistTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Close panel on Escape
   useEffect(() => {
@@ -74,6 +77,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
           );
           return { ...prev, slides };
         });
+        // Increment remoteVersion so ExcalidrawCanvas picks up the new elements
+        setRemoteVersion((v) => v + 1);
       }),
     ];
     return () => {
@@ -156,7 +161,18 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
       next.set(slideId, dataUrl);
       return next;
     });
-  }, []);
+    // Debounce thumbnail persistence to avoid excessive API calls during rapid edits
+    const existing = thumbPersistTimers.current.get(slideId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      thumbPersistTimers.current.delete(slideId);
+      void apiFetch(`/api/presentations/${presentationId}/slides/${slideId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ thumbnail: dataUrl }),
+      }).catch(() => { /* non-critical */ });
+    }, 3000); // wait 3 s after last thumbnail change before persisting
+    thumbPersistTimers.current.set(slideId, timer);
+  }, [presentationId]);
 
   const handleSlideRename = useCallback(async (slideId: string, title: string) => {
     try {
@@ -283,6 +299,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
                 onThumbnailChange={handleThumbnailChange}
                 presentationId={presentationId}
                 previewScene={previewScene}
+                remoteVersion={remoteVersion}
               />
             </div>
           ) : (

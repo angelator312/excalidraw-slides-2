@@ -6,6 +6,9 @@
  * - Presentation thumbnailMode model field
  * - SettingsModal editor list logic
  * - canEdit / canView with editors list
+ * - Role management logic
+ * - Guest restriction logic
+ * - Auth token sign-in flow
  */
 import { describe, it, expect } from 'vitest';
 import { canView, canEdit } from '../server/src/middleware/permUtils.js';
@@ -34,7 +37,6 @@ describe('Router: URL → Route', () => {
   });
 
   it('does NOT map /admin/ to home (trailing slash)', () => {
-    // /admin/ doesn't match /admin exactly
     expect(parseRoute('/admin/')).toBe('home');
   });
 
@@ -45,7 +47,7 @@ describe('Router: URL → Route', () => {
 
   it('ignores non-hex or wrong-length IDs', () => {
     expect(parseRoute('/presentation/not-an-id')).toBe('home');
-    expect(parseRoute('/presentation/abc123')).toBe('home'); // too short
+    expect(parseRoute('/presentation/abc123')).toBe('home');
   });
 
   it('maps /invite/accept?token=... to invite-accept', () => {
@@ -117,7 +119,6 @@ describe('Invite token: multi-use accept flow', () => {
       expect(result.ok).toBe(true);
     }
     expect(token.uses).toBe(5);
-    // 6th accept should fail
     const last = acceptToken(token);
     expect(last.ok).toBe(false);
     expect(last.error).toBe('exhausted');
@@ -145,7 +146,7 @@ describe('Invite token: multi-use accept flow', () => {
   it('does not increment uses when rejected', () => {
     const token: MockInviteToken = { uses: 0, maxUses: 1, expiresAt: past };
     acceptToken(token);
-    expect(token.uses).toBe(0); // should not be incremented on rejection
+    expect(token.uses).toBe(0);
   });
 });
 
@@ -229,7 +230,48 @@ describe('fingerprintElements', () => {
   });
 });
 
-// ─── Server-side element fingerprint (id:version based) ───────────────────
+// ─── Remote diff detection (collaboration fix) ────────────────────────────
+
+describe('Remote diff detection via remoteVersion', () => {
+  // Simulates the remoteVersion pattern: when a remote diff arrives,
+  // remoteVersion increments, triggering the ExcalidrawCanvas useEffect.
+
+  it('remoteVersion increment triggers canvas update', () => {
+    let remoteVersion = 0;
+    let canvasUpdateCount = 0;
+
+    // Simulate the effect: fires when remoteVersion changes
+    function simulateEffect(newVersion: number): void {
+      if (newVersion !== remoteVersion) {
+        remoteVersion = newVersion;
+        canvasUpdateCount++;
+      }
+    }
+
+    simulateEffect(0); // initial mount — no update
+    expect(canvasUpdateCount).toBe(0);
+
+    simulateEffect(1); // remote diff received
+    expect(canvasUpdateCount).toBe(1);
+
+    simulateEffect(1); // same version — no update
+    expect(canvasUpdateCount).toBe(1);
+
+    simulateEffect(2); // another remote diff
+    expect(canvasUpdateCount).toBe(2);
+  });
+
+  it('fingerprint change detection avoids spurious updates', () => {
+    const fp1 = [{ id: 'a', version: 1 }];
+    const fp2 = [{ id: 'a', version: 1 }]; // same content
+    const fp3 = [{ id: 'a', version: 2 }]; // changed
+
+    expect(fingerprintElements(fp1)).toBe(fingerprintElements(fp2)); // no update needed
+    expect(fingerprintElements(fp1)).not.toBe(fingerprintElements(fp3)); // update needed
+  });
+});
+
+// ─── Server-side element fingerprint ──────────────────────────────────────
 
 function serverFp(elements: unknown): string {
   return (Array.isArray(elements) ? elements : [])
@@ -252,7 +294,6 @@ describe('serverFp (server-side fingerprint)', () => {
   it('skips auto-version when elements unchanged', () => {
     const oldEls = [{ id: 'rect1', version: 3 }];
     const newEls = [{ id: 'rect1', version: 3 }];
-    // Same fingerprint → no version saved
     expect(serverFp(oldEls)).toBe(serverFp(newEls));
   });
 
@@ -263,7 +304,7 @@ describe('serverFp (server-side fingerprint)', () => {
   });
 });
 
-// ─── Permissions: canEdit / canView with extended edge cases ──────────────
+// ─── Permissions: canEdit / canView ──────────────────────────────────────
 
 function makeId(n: string) { return { toString: () => n }; }
 
@@ -338,13 +379,145 @@ describe('canView with editors list', () => {
   });
 });
 
+// ─── Role management logic ─────────────────────────────────────────────────
+
+type UserRole = 'owner' | 'user' | 'anonymous';
+
+function canChangeRole(
+  requesterRole: UserRole,
+  targetRole: UserRole,
+  isSelf: boolean,
+  newRole: string,
+): { ok: boolean; error?: string } {
+  if (requesterRole !== 'owner') return { ok: false, error: 'Only owners can change roles' };
+  if (isSelf) return { ok: false, error: 'Cannot change your own role' };
+  if (targetRole === 'anonymous') return { ok: false, error: 'Cannot change role of anonymous users' };
+  if (!['owner', 'user'].includes(newRole)) return { ok: false, error: 'Invalid role' };
+  return { ok: true };
+}
+
+describe('Role management', () => {
+  it('owner can promote user to owner', () => {
+    expect(canChangeRole('owner', 'user', false, 'owner').ok).toBe(true);
+  });
+
+  it('owner can demote owner to user', () => {
+    expect(canChangeRole('owner', 'owner', false, 'user').ok).toBe(true);
+  });
+
+  it('owner cannot change their own role', () => {
+    const result = canChangeRole('owner', 'owner', true, 'user');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('own role');
+  });
+
+  it('non-owner cannot change roles', () => {
+    expect(canChangeRole('user', 'user', false, 'owner').ok).toBe(false);
+  });
+
+  it('cannot change anonymous user role', () => {
+    const result = canChangeRole('owner', 'anonymous', false, 'user');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('anonymous');
+  });
+
+  it('rejects invalid role values', () => {
+    const result = canChangeRole('owner', 'user', false, 'superadmin');
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Invalid role');
+  });
+});
+
+// ─── Guest restriction logic ───────────────────────────────────────────────
+
+describe('Guest restriction: cannot create presentations', () => {
+  function canCreatePresentation(role: UserRole): boolean {
+    return role !== 'anonymous';
+  }
+
+  it('owner can create presentations', () => {
+    expect(canCreatePresentation('owner')).toBe(true);
+  });
+
+  it('regular user can create presentations', () => {
+    expect(canCreatePresentation('user')).toBe(true);
+  });
+
+  it('anonymous/guest cannot create presentations', () => {
+    expect(canCreatePresentation('anonymous')).toBe(false);
+  });
+});
+
+// ─── Auth token sign-in flow ───────────────────────────────────────────────
+
+describe('Auth token sign-in validation', () => {
+  function isValidJwtFormat(token: string): boolean {
+    const parts = token.trim().split('.');
+    return parts.length === 3 && parts.every((p) => p.length > 0);
+  }
+
+  it('accepts a valid 3-part JWT format', () => {
+    const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+    expect(isValidJwtFormat(token)).toBe(true);
+  });
+
+  it('rejects empty string', () => {
+    expect(isValidJwtFormat('')).toBe(false);
+  });
+
+  it('rejects strings with wrong number of parts', () => {
+    expect(isValidJwtFormat('just.one')).toBe(false);
+    expect(isValidJwtFormat('one.two.three.four')).toBe(false);
+  });
+
+  it('rejects non-JWT strings', () => {
+    expect(isValidJwtFormat('not-a-token-at-all')).toBe(false);
+    expect(isValidJwtFormat('abc')).toBe(false);
+  });
+
+  it('trims whitespace before validation', () => {
+    const token = '  eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.sig  ';
+    expect(isValidJwtFormat(token.trim())).toBe(true);
+  });
+});
+
+// ─── Thumbnail persistence logic ───────────────────────────────────────────
+
+describe('Thumbnail data URL size validation', () => {
+  const MAX_THUMB_SIZE = 100 * 1024; // 100KB
+
+  function validateThumb(dataUrl: string): { ok: boolean; error?: string } {
+    if (dataUrl.length > MAX_THUMB_SIZE) {
+      return { ok: false, error: `thumbnail exceeds maximum size of ${MAX_THUMB_SIZE} bytes` };
+    }
+    return { ok: true };
+  }
+
+  it('accepts small thumbnails under 100KB', () => {
+    const small = 'data:image/jpeg;base64,' + 'A'.repeat(1000);
+    expect(validateThumb(small).ok).toBe(true);
+  });
+
+  it('rejects thumbnails over 100KB with error message', () => {
+    const large = 'data:image/jpeg;base64,' + 'A'.repeat(MAX_THUMB_SIZE + 1);
+    const result = validateThumb(large);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('exceeds maximum size');
+  });
+
+  it('exactly 100KB is acceptable', () => {
+    const exact = 'A'.repeat(MAX_THUMB_SIZE);
+    expect(validateThumb(exact).ok).toBe(true);
+  });
+});
+
 // ─── Presentation thumbnailMode ───────────────────────────────────────────
 
 type ThumbnailMode = 'first-slide' | 'grid';
 
 function normalizeThumbnailMode(value?: string): ThumbnailMode {
   if (value === 'grid') return 'grid';
-  return 'first-slide'; // default
+  return 'first-slide';
 }
 
 describe('thumbnailMode', () => {
@@ -364,7 +537,7 @@ describe('thumbnailMode', () => {
 
 // ─── Auth: username validation ────────────────────────────────────────────
 
-describe('Username validation (invite accept)', () => {
+describe('Username validation (invite sign-up)', () => {
   const USERNAME_RE = /^[a-z0-9_]{2,40}$/;
 
   it('accepts valid lowercase alphanumeric+underscore', () => {

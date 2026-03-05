@@ -189,11 +189,11 @@ You are now logged in as the owner.
 
 ---
 
-## Creating Users (Admin Panel)
+## Creating & Managing Users (Admin Panel)
 
 Once logged in as an owner, you manage all user creation from the **Admin panel** at `/admin`.
 
-### Step-by-step
+### Creating an invite link (step-by-step)
 
 1. Click **Admin** in the top navigation bar (only visible to owners)
 2. Go to the **🔗 Invite Tokens** tab
@@ -207,9 +207,21 @@ Once logged in as an owner, you manage all user creation from the **Admin panel*
 ### What happens when a user follows the link
 
 1. They land on `/invite/accept?token=<token>`
-2. The login page auto-detects the token and skips to account setup
+2. The page switches to the **Sign up** tab automatically and skips to account setup
 3. They choose a **username** and **display name**
-4. Account is created and they're immediately logged in
+4. Account is created and they are shown their **auth token** — a long string starting with `eyJ`
+
+> ⚠ **Important:** Users must copy and save their auth token before clicking "Enter app". This token is not stored by the app and cannot be recovered.
+
+### How users sign in after initial sign-up
+
+On the login screen, use the **Sign in** tab and paste the auth token that was shown during sign-up. The app verifies the token and starts a new 30-day session.
+
+### Managing user roles
+
+In the **👥 Users** tab, every registered user has a role dropdown. Owners can change any user's role between `user` and `owner`. A user cannot change their own role.
+
+> **Note:** Changing a user's role does not invalidate their existing auth token. Their next sign-in will use the new role.
 
 ### Revoking an invite
 
