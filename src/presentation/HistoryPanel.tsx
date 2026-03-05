@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'preact/hooks';
 import { apiFetch } from '../lib/api';
+import type { ExcalidrawScene } from './slideModel';
 
 interface Version {
   _id: string;
@@ -8,6 +9,7 @@ interface Version {
   description?: string;
   createdAt: string;
   userId?: string;
+  sceneJSON: ExcalidrawScene;
 }
 
 interface Props {
@@ -15,9 +17,11 @@ interface Props {
   slideId: string;
   onClose: () => void;
   onRestore: () => void;
+  /** Called with a scene to preview (or null to stop previewing) */
+  onPreviewScene?: (scene: ExcalidrawScene | null) => void;
 }
 
-export function HistoryPanel({ presentationId, slideId, onClose, onRestore }: Props) {
+export function HistoryPanel({ presentationId, slideId, onClose, onRestore, onPreviewScene }: Props) {
   const [versions, setVersions] = useState<Version[]>([]);
   const [loading, setLoading] = useState(true);
   const [snapName, setSnapName] = useState('');
@@ -30,6 +34,12 @@ export function HistoryPanel({ presentationId, slideId, onClose, onRestore }: Pr
     void loadVersions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slideId]);
+
+  // Ensure preview is cleared if the panel closes while hovering
+  useEffect(() => () => {
+    onPreviewScene?.(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadVersions = async () => {
     setLoading(true);
@@ -65,6 +75,7 @@ export function HistoryPanel({ presentationId, slideId, onClose, onRestore }: Pr
 
   const restore = async (versionId: string) => {
     if (!confirm('Restore this version? Current slide will be replaced.')) return;
+    onPreviewScene?.(null);
     try {
       await apiFetch(
         `/api/presentations/${presentationId}/slides/${slideId}/versions/${versionId}/restore`,
@@ -123,7 +134,12 @@ export function HistoryPanel({ presentationId, slideId, onClose, onRestore }: Pr
 
         {/* Version list */}
         <section class="history-versions">
-          <h3 class="panel-section-title">Versions</h3>
+          <h3 class="panel-section-title">
+            Versions
+            {onPreviewScene && (
+              <span class="panel-hint"> — hover to preview</span>
+            )}
+          </h3>
           {loading ? (
             <div class="panel-loading"><div class="spinner spinner-sm"/></div>
           ) : versions.length === 0 ? (
@@ -131,7 +147,12 @@ export function HistoryPanel({ presentationId, slideId, onClose, onRestore }: Pr
           ) : (
             <ul class="version-list">
               {versions.map((v) => (
-                <li key={v._id} class="version-item">
+                <li
+                  key={v._id}
+                  class="version-item"
+                  onMouseEnter={() => onPreviewScene?.(v.sceneJSON)}
+                  onMouseLeave={() => onPreviewScene?.(null)}
+                >
                   <div class="version-item-header">
                     <span class={`version-badge version-${v.type}`}>{v.type}</span>
                     {v.name && <strong class="version-name">{v.name}</strong>}

@@ -291,9 +291,17 @@ router.patch('/:id/slides/:slideId', requireAuth, async (req: AuthenticatedReque
     title?: string;
   };
 
-  // Save auto-version before overwriting
+  // Save auto-version before overwriting — only when elements actually changed
   if (sceneJSON) {
-    await saveAutoVersion(slide._id.toString(), pres._id.toString(), slide.sceneJSON as Record<string, unknown>, req.user!._id.toString());
+    const fp = (arr: unknown) =>
+      (Array.isArray(arr) ? arr : [])
+        .map((el: Record<string, unknown>) => `${String(el['id'])}:${String(el['version'] ?? 0)}`)
+        .join('|');
+    const oldFp = fp((slide.sceneJSON as Record<string, unknown>)['elements']);
+    const newFp = fp((sceneJSON as Record<string, unknown>)['elements']);
+    if (oldFp !== newFp) {
+      await saveAutoVersion(slide._id.toString(), pres._id.toString(), slide.sceneJSON as Record<string, unknown>, req.user!._id.toString());
+    }
     slide.sceneJSON = sceneJSON;
   }
   if (notes !== undefined) slide.notes = notes;

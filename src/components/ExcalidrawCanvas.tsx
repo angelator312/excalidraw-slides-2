@@ -1,23 +1,22 @@
 /**
  * ExcalidrawCanvas — inner component that statically imports @excalidraw/excalidraw.
  *
- * This file is intentionally **not** imported directly from the main bundle.
- * It is lazily loaded by ExcalidrawViewer.tsx via preact/compat's `lazy()` so
- * that Vite code-splits the large Excalidraw package into a separate chunk.
- *
- * Patterns taken from the RichFreeExcalidraw reference:
- *  - useState for excalidrawAPI (so useHandleLibrary can react to it being set)
- *  - useHandleLibrary to auto-load per-presentation server libraries + handle
- *    library install URLs
- *  - mergeLibraryItems to combine multiple library sources without duplicates
- *  - CaptureUpdateAction.NEVER for slide transitions (keeps undo history clean)
+ * Key behaviours:
+ *  - useHandleLibrary auto-loads per-presentation server libraries on mount and
+ *    handles library install deep-links from excalidraw.com.
+ *  - onLibraryChange saves the full library state back to the server via the
+ *    PUT /libraries/user upsert endpoint so changes survive a page refresh.
+ *  - onChange only fires when the *elements* change (not just appState), so
+ *    auto-versioning is only triggered by real content edits.
+ *  - CaptureUpdateAction.NEVER on slide transitions keeps undo history clean.
  */
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import {
   Excalidraw,
   useHandleLibrary,
   mergeLibraryItems,
   CaptureUpdateAction,
+  exportToBlob,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import type {
@@ -34,27 +33,30 @@ export interface ExcalidrawCanvasProps {
   slide: SlideRef | null;
   /** true = read-only view mode (default); false = interactive editor */
   viewMode?: boolean;
-  /** Fired (debounced 800 ms) in edit mode when the scene changes */
+  /** Fired (debounced 800 ms) when elements actually change in edit mode */
   onChange?: (scene: ExcalidrawScene) => void;
-  /** Presentation ID used to fetch server-side libraries for this presentation */
+  /** Called with a PNG data URL shortly after a scene change */
+  onThumbnailChange?: (slideId: string, dataUrl: string) => void;
+  /** Presentation ID used to fetch + auto-save server-side libraries */
   presentationId?: string;
   /** Additional CSS class applied to the wrapper div */
   className?: string;
+  /** When set, temporarily display this scene (history hover preview) */
+  previewScene?: ExcalidrawScene | null;
 }
 
-/**
- * Fetches all library items for a presentation from the server and returns
- * them merged into a single LibraryItems array.
- */
+/** Compute a fast fingerprint of an elements array (id + version pairs). */
+function fingerprintElements(elements: readonly { id: string; version?: number }[]): string {
+  return elements.map((el) => `${el.id}:${el.version ?? 0}`).join('|');
+}
+
 async function fetchPresentationLibraries(presentationId: string): Promise<LibraryItems> {
   try {
-    // Step 1: get list of library metadata (no heavy elements in the list)
     const metas = await apiFetch<Array<{ _id: string; name: string }>>(
       `/api/presentations/${presentationId}/libraries`,
     );
     if (!metas?.length) return [];
 
-    // Step 2: fetch full library data for each entry in parallel
     const responses = await Promise.all(
       metas.map((m) =>
         apiFetch<{ libraryData: Record<string, unknown> }>(
@@ -63,17 +65,12 @@ async function fetchPresentationLibraries(presentationId: string): Promise<Libra
       ),
     );
 
-    // Step 3: normalise both Excalidraw library formats and merge them
-    // v2 format: { type: "excalidrawlib", version: 2, library: [...] }
-    // v1 format: { libraryItems: [...] }
     let merged: LibraryItems = [];
     for (const resp of responses) {
       if (!resp?.libraryData) continue;
       const raw = resp.libraryData;
       const items = (raw['library'] ?? raw['libraryItems'] ?? []) as LibraryItems;
-      if (items.length) {
-        merged = mergeLibraryItems(merged, items);
-      }
+      if (items.length) merged = mergeLibraryItems(merged, items);
     }
     return merged;
   } catch {
@@ -86,34 +83,27 @@ export default function ExcalidrawCanvas({
   slide,
   viewMode = true,
   onChange,
+  onThumbnailChange,
   presentationId,
   className,
+  previewScene,
 }: ExcalidrawCanvasProps) {
-  /**
-   * Store the API in STATE (not just a ref) so that:
-   * 1. useHandleLibrary can react to it being set
-   * 2. the slide-update effect re-runs the first time the API becomes available
-   *
-   * We additionally keep a ref for synchronous access inside callbacks.
-   */
   const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawImperativeAPI | null>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
 
   // Track which slide is currently displayed to skip redundant updateScene calls
   const renderedSlideIdRef = useRef<string | null>(null);
 
-  // Debounce timer for the onChange prop
+  // Debounce timers
   const changeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const thumbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /**
-   * useHandleLibrary (from @excalidraw/excalidraw)
-   *
-   * Automatically:
-   * - Calls getInitialLibraryItems() when excalidrawAPI first becomes available
-   *   and loads the returned items into the Excalidraw library panel.
-   * - Handles excalidraw.com library install deep-links so users can add items
-   *   from the public library directly from the browser URL.
-   */
+  // Track the last elements fingerprint so onChange only fires on real edits
+  const lastElementsFpRef = useRef<string>('');
+
+  // Track whether we're showing a preview (to restore on mouse-leave)
+  const inPreviewRef = useRef(false);
+
   useHandleLibrary({
     excalidrawAPI,
     getInitialLibraryItems: async (): Promise<LibraryItems> => {
@@ -122,38 +112,67 @@ export default function ExcalidrawCanvas({
     },
   });
 
-  // Keep the ref in sync with the state so callbacks can use it synchronously
   const handleExcalidrawAPI = (api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
     setExcalidrawAPI(api);
   };
 
-  /**
-   * Slide transition effect
-   *
-   * Fires whenever:
-   *  - excalidrawAPI first becomes available (after mount)
-   *  - slide.id changes (user navigates to a different slide)
-   *  - viewMode toggles (presenter ↔ editor)
-   *
-   * Uses CaptureUpdateAction.NEVER so slide transitions do NOT pollute the
-   * undo/redo stack — undoing an edit should not jump back to the previous
-   * slide's content.
-   */
+  /** Persist library changes back to the server so they survive refresh. */
+  const handleLibraryChange = useCallback(
+    async (items: LibraryItems) => {
+      if (!presentationId || viewMode) return;
+      const libraryData = { type: 'excalidrawlib', version: 2, library: items };
+      try {
+        await apiFetch(`/api/presentations/${presentationId}/libraries/user`, {
+          method: 'PUT',
+          body: JSON.stringify({ libraryData }),
+        });
+      } catch {
+        // non-critical — library is still in Excalidraw's local state
+      }
+    },
+    [presentationId, viewMode],
+  );
+
+  /** Slide transition / preview effect */
   useEffect(() => {
-    if (!excalidrawAPI || !slide) return;
-    if (renderedSlideIdRef.current === slide.id) {
-      // Same slide but viewMode may have toggled — push an appState-only update
+    if (!excalidrawAPI) return;
+
+    // If a preview scene is provided, show it temporarily
+    if (previewScene !== undefined && previewScene !== null) {
+      inPreviewRef.current = true;
       excalidrawAPI.updateScene({
+        elements: previewScene.elements ?? [],
         appState: {
-          viewModeEnabled: viewMode,
+          ...(previewScene.appState ?? {}),
+          viewModeEnabled: true,
           zenModeEnabled: false,
         },
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      requestAnimationFrame(() => {
+        apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false });
+      });
+      return;
+    }
+
+    // Restore normal slide when preview ends
+    if (inPreviewRef.current && previewScene === null) {
+      inPreviewRef.current = false;
+      // fall through to normal slide update below
+    }
+
+    if (!slide) return;
+    if (renderedSlideIdRef.current === slide.id && !inPreviewRef.current) {
+      excalidrawAPI.updateScene({
+        appState: { viewModeEnabled: viewMode, zenModeEnabled: false },
         captureUpdate: CaptureUpdateAction.NEVER,
       });
       return;
     }
     renderedSlideIdRef.current = slide.id;
+    // Seed the elements fingerprint to avoid a spurious onChange on first load
+    lastElementsFpRef.current = fingerprintElements(slide.sceneJSON?.elements ?? []);
 
     excalidrawAPI.updateScene({
       elements: slide.sceneJSON?.elements ?? [],
@@ -166,17 +185,16 @@ export default function ExcalidrawCanvas({
       captureUpdate: CaptureUpdateAction.NEVER,
     });
 
-    // After the DOM updates, fit the viewport to the slide's content
     requestAnimationFrame(() => {
       apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false });
     });
-  // excalidrawAPI is state, so the effect correctly re-runs when it gets set.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [excalidrawAPI, slide?.id, viewMode]);
+  }, [excalidrawAPI, slide?.id, viewMode, previewScene]);
 
-  // Clean up debounce timer on unmount
+  // Cleanup debounce timers on unmount
   useEffect(() => () => {
     if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
+    if (thumbTimerRef.current) clearTimeout(thumbTimerRef.current);
   }, []);
 
   const handleChange = (
@@ -185,15 +203,42 @@ export default function ExcalidrawCanvas({
     files: BinaryFiles,
   ) => {
     if (viewMode || !onChange) return;
+
+    // Only fire onChange when elements actually changed
+    const fp = fingerprintElements(elements);
+    if (fp === lastElementsFpRef.current) return;
+    lastElementsFpRef.current = fp;
+
     if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
     changeTimerRef.current = setTimeout(() => {
-      onChange({
+      const scene: ExcalidrawScene = {
         type: 'excalidraw',
         version: 2,
         elements: [...elements] as ExcalidrawScene['elements'],
         appState: appState as ExcalidrawScene['appState'],
         files: files as ExcalidrawScene['files'],
-      });
+      };
+      onChange(scene);
+
+      // Generate thumbnail asynchronously (debounced separately so it doesn't delay saves)
+      if (onThumbnailChange && slide?.id) {
+        const slideId = slide.id;
+        if (thumbTimerRef.current) clearTimeout(thumbTimerRef.current);
+        thumbTimerRef.current = setTimeout(async () => {
+          try {
+            const blob = await exportToBlob({
+              elements: [...elements],
+              appState: { ...appState, exportBackground: true, exportWithDarkMode: false } as AppState,
+              files,
+              mimeType: 'image/png',
+              quality: 0.8,
+              scale: 0.5,
+            });
+            const url = URL.createObjectURL(blob);
+            onThumbnailChange(slideId, url);
+          } catch { /* non-critical */ }
+        }, 1500);
+      }
     }, 800);
   };
 
@@ -225,11 +270,7 @@ export default function ExcalidrawCanvas({
     >
       <Excalidraw
         excalidrawAPI={handleExcalidrawAPI}
-        initialData={{
-          elements,
-          appState,
-          scrollToContent: true,
-        }}
+        initialData={{ elements, appState, scrollToContent: true }}
         viewModeEnabled={viewMode}
         zenModeEnabled={false}
         gridModeEnabled={false}
@@ -238,6 +279,7 @@ export default function ExcalidrawCanvas({
         handleKeyboardGlobally={false}
         autoFocus={!viewMode}
         onChange={viewMode ? undefined : handleChange}
+        onLibraryChange={viewMode ? undefined : handleLibraryChange}
       />
     </div>
   );

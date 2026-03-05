@@ -2,6 +2,9 @@ import { useState } from 'preact/hooks';
 import { apiFetch } from '../lib/api';
 import type { SlideRef } from './slideModel';
 
+/** Maximum length for a slide title (shared constant) */
+const MAX_SLIDE_TITLE_LENGTH = 120;
+
 interface Props {
   slides: SlideRef[];
   currentIndex: number;
@@ -9,6 +12,8 @@ interface Props {
   canEdit: boolean;
   presentationId: string;
   onSlidesChange: (slides: SlideRef[]) => void;
+  onRename?: (slideId: string, title: string) => Promise<void>;
+  thumbnails?: Map<string, string>;
 }
 
 export function SlideNav({
@@ -18,8 +23,12 @@ export function SlideNav({
   canEdit,
   presentationId,
   onSlidesChange,
+  onRename,
+  thumbnails,
 }: Props) {
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
 
   const addSlide = async () => {
     if (!canEdit) return;
@@ -51,6 +60,19 @@ export function SlideNav({
     } catch { /* ignore */ }
   };
 
+  const startEditing = (slide: SlideRef) => {
+    if (!canEdit) return;
+    setEditingId(slide.id);
+    setEditingTitle(slide.title || `Slide ${slides.indexOf(slide) + 1}`);
+  };
+
+  const commitRename = async (slideId: string) => {
+    const title = editingTitle.trim();
+    setEditingId(null);
+    if (!title) return;
+    await onRename?.(slideId, title);
+  };
+
   return (
     <aside class="slide-nav" aria-label="Slide list">
       <div class="slide-nav-header">
@@ -68,33 +90,74 @@ export function SlideNav({
         )}
       </div>
       <ul class="slide-nav-list" role="listbox" aria-label="Slides">
-        {slides.map((s, i) => (
-          <li
-            key={s.id}
-            class={`slide-nav-item ${i === currentIndex ? 'active' : ''}`}
-            role="option"
-            aria-selected={i === currentIndex}
-          >
-            <button
-              class="slide-nav-btn"
-              onClick={() => onSelect(i)}
-              aria-label={`Slide ${i + 1}: ${s.title}`}
+        {slides.map((s, i) => {
+          const thumb = thumbnails?.get(s.id);
+          const isActive = i === currentIndex;
+          const isEditing = editingId === s.id;
+          return (
+            <li
+              key={s.id}
+              class={`slide-nav-item ${isActive ? 'active' : ''}`}
+              role="option"
+              aria-selected={isActive}
             >
-              <span class="slide-num">{i + 1}</span>
-              <span class="slide-label">{s.title}</span>
-            </button>
-            {canEdit && slides.length > 1 && (
               <button
-                class="btn-icon slide-delete-btn"
-                onClick={() => void deleteSlide(s.id, i)}
-                aria-label={`Delete slide ${i + 1}`}
-                title="Delete slide"
+                class="slide-nav-btn"
+                onClick={() => onSelect(i)}
+                aria-label={`Slide ${i + 1}: ${s.title}`}
               >
-                ✕
+                {/* Thumbnail */}
+                <div class="slide-thumb" aria-hidden="true">
+                  {thumb ? (
+                    <img src={thumb} alt="" class="slide-thumb-img" />
+                  ) : (
+                    <div class="slide-thumb-placeholder">
+                      <span class="slide-num">{i + 1}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Label / inline editor */}
+                {isEditing ? (
+                  <input
+                    class="slide-title-input"
+                    value={editingTitle}
+                    onInput={(e) => setEditingTitle((e.target as HTMLInputElement).value)}
+                    onBlur={() => void commitRename(s.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void commitRename(s.id);
+                      if (e.key === 'Escape') setEditingId(null);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    maxLength={MAX_SLIDE_TITLE_LENGTH}
+                    // eslint-disable-next-line jsx-a11y/no-autofocus
+                    autoFocus
+                    aria-label="Rename slide"
+                  />
+                ) : (
+                  <span
+                    class="slide-label"
+                    onDblClick={(e) => { e.stopPropagation(); startEditing(s); }}
+                    title={canEdit ? 'Double-click to rename' : undefined}
+                  >
+                    {s.title || `Slide ${i + 1}`}
+                  </span>
+                )}
               </button>
-            )}
-          </li>
-        ))}
+
+              {canEdit && slides.length > 1 && (
+                <button
+                  class="btn-icon slide-delete-btn"
+                  onClick={() => void deleteSlide(s.id, i)}
+                  aria-label={`Delete slide ${i + 1}`}
+                  title="Delete slide"
+                >
+                  ✕
+                </button>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </aside>
   );

@@ -16,24 +16,15 @@ const ExcalidrawCanvas = lazy(
 );
 
 export interface ExcalidrawViewerProps {
-  /** Slide to display */
   slide: SlideRef | null;
-  /**
-   * When true (default), renders in read-only view mode.
-   * When false, renders in full edit mode and calls onChange on every scene change.
-   */
   viewMode?: boolean;
-  /**
-   * Called (debounced ~800 ms) when the scene changes in edit mode.
-   */
   onChange?: (scene: ExcalidrawScene) => void;
-  /**
-   * Presentation ID used to fetch and auto-load server-side libraries into the
-   * Excalidraw panel via useHandleLibrary.
-   */
+  /** Called with a PNG data URL shortly after a scene change */
+  onThumbnailChange?: (slideId: string, dataUrl: string) => void;
   presentationId?: string;
-  /** Class name applied to the outer wrapper div */
   className?: string;
+  /** When set, temporarily display this scene (history hover preview) */
+  previewScene?: ExcalidrawScene | null;
 }
 
 /**

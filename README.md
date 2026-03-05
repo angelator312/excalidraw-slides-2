@@ -103,6 +103,39 @@ POST /api/auth/accept
 
 ---
 
+## Admin Page — Creating & Managing Users
+
+The easiest way to create new users is through the built-in **Admin UI** at `/admin` (owner only). No manual `mongosh` or `curl` required after the initial bootstrap.
+
+### Step-by-step: Invite a new user
+
+1. Log in as an **owner** account and open `/admin` in your browser.
+2. Click **"Create Invite"** and fill in:
+   - **Email** (optional — informational only, not validated)
+   - **Expiry** — how many days the link is valid (default: 7)
+   - **Max uses** — `1` for a personal invite, up to `100` for a team sign-up link
+3. Click **Generate**. Copy the invite link shown (it includes the one-time token).
+4. Send the link to the new user. When they open it they will be prompted to choose a **username** and **display name**.
+5. After they accept, their account appears in the **Users** list in the admin panel.
+
+### Revoking an invite
+
+Open the **Invites** tab in the admin panel, find the token and click **Revoke**. Any unused tokens are immediately invalidated.
+
+### Removing or editing a user
+
+Currently only MongoDB direct edits are supported for deleting or changing a user's role:
+
+```js
+// Promote a user to owner
+db.users.updateOne({ username: "alice" }, { $set: { role: "owner" } })
+
+// Delete a user
+db.users.deleteOne({ username: "alice" })
+```
+
+---
+
 ## API Reference
 
 ### Auth

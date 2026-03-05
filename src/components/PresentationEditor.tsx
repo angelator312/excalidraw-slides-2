@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'preact/hooks';
+import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import { apiFetch } from '../lib/api';
 import { PresenterView } from '../presentation/PresenterView';
 import type { SlideRef, ExcalidrawScene } from '../presentation/slideModel';
@@ -7,7 +7,6 @@ import { HistoryPanel } from '../presentation/HistoryPanel';
 import { ShareModal } from './ShareModal';
 import { SettingsModal } from '../presentation/SettingsModal';
 import { ExportModal } from '../presentation/ExportModal';
-import { LibraryUploader } from './LibraryUploader';
 import { ExcalidrawViewer } from './ExcalidrawViewer';
 import { rtcClient } from '../presentation/rtc';
 import { useAuth } from '../hooks/useAuth';
@@ -26,7 +25,7 @@ export interface PresentationDetail {
   slides: SlideRef[];
 }
 
-type Panel = 'history' | 'share' | 'settings' | 'export' | 'libraries' | null;
+type Panel = 'history' | 'share' | 'settings' | 'export' | null;
 
 export function PresentationEditor({ presentationId, onBack }: Props) {
   const { user } = useAuth();
@@ -36,6 +35,10 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   const [error, setError] = useState('');
   const [mode, setMode] = useState<'edit' | 'present'>('edit');
   const [openPanel, setOpenPanel] = useState<Panel>(null);
+  /** scene to show as a temporary hover preview in the canvas (null = current slide) */
+  const [previewScene, setPreviewScene] = useState<ExcalidrawScene | null | undefined>(undefined);
+  /** slideId → PNG thumbnail data URL */
+  const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
 
   const slideRefs = useRef<Map<number, HTMLElement>>(new Map());
 
@@ -91,12 +94,12 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
     }
   };
 
-  const handleSlideSelect = (index: number) => {
+  const handleSlideSelect = useCallback((index: number) => {
     setCurrentIndex(index);
     rtcClient.sendSlideChange(index);
-  };
+  }, []);
 
-  const handleNotesSave = async (notes: string) => {
+  const handleNotesSave = useCallback(async (notes: string) => {
     if (!pres) return;
     const slide = pres.slides[currentIndex];
     if (!slide) return;
@@ -113,9 +116,10 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
     } catch {
       // non-critical
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pres, currentIndex, presentationId]);
 
-  const handleSceneChange = async (sceneJSON: ExcalidrawScene) => {
+  const handleSceneChange = useCallback(async (sceneJSON: ExcalidrawScene) => {
     if (!pres) return;
     const slide = pres.slides[currentIndex];
     if (!slide) return;
@@ -138,7 +142,37 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
     } catch {
       // non-critical
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pres, currentIndex, presentationId]);
+
+  const handleThumbnailChange = useCallback((slideId: string, dataUrl: string) => {
+    setThumbnails((prev) => {
+      const next = new Map(prev);
+      // Revoke the old object URL to free memory
+      const old = prev.get(slideId);
+      if (old?.startsWith('blob:')) URL.revokeObjectURL(old);
+      next.set(slideId, dataUrl);
+      return next;
+    });
+  }, []);
+
+  const handleSlideRename = useCallback(async (slideId: string, title: string) => {
+    try {
+      await apiFetch(`/api/presentations/${presentationId}/slides/${slideId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      });
+      setPres((prev) => {
+        if (!prev) return prev;
+        const slides = prev.slides.map((s) => (s.id === slideId ? { ...s, title } : s));
+        return { ...prev, slides };
+      });
+    } catch {
+      // non-critical
+    }
+  }, [presentationId]);
+
+  const handleExitPresent = useCallback(() => setMode('edit'), []);
 
   const togglePanel = (panel: Panel) =>
     setOpenPanel((prev) => (prev === panel ? null : panel));
@@ -155,11 +189,12 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         slides={pres.slides}
         currentIndex={currentIndex}
         onSlideChange={handleSlideSelect}
-        onExit={() => setMode('edit')}
+        onExit={handleExitPresent}
         canControl={pres.canEdit || user?.role === 'owner'}
         onNotesSave={handleNotesSave}
         slideElementRefs={slideRefs}
         presentationId={presentationId}
+        thumbnails={thumbnails}
       />
     );
   }
@@ -183,16 +218,6 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
               aria-pressed={openPanel === 'history'}
             >
               History
-            </button>
-          )}
-          {pres.canEdit && (
-            <button
-              class={`btn-toolbar ${openPanel === 'libraries' ? 'active' : ''}`}
-              onClick={() => togglePanel('libraries')}
-              title="Manage libraries"
-              aria-pressed={openPanel === 'libraries'}
-            >
-              Libraries
             </button>
           )}
           <button
@@ -234,6 +259,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
           canEdit={pres.canEdit}
           presentationId={presentationId}
           onSlidesChange={(slides) => setPres((p) => p ? { ...p, slides } : p)}
+          onRename={handleSlideRename}
+          thumbnails={thumbnails}
         />
 
         <div class="slide-canvas-area">
@@ -246,7 +273,9 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
                 slide={currentSlide}
                 viewMode={!pres.canEdit}
                 onChange={pres.canEdit ? handleSceneChange : undefined}
+                onThumbnailChange={handleThumbnailChange}
                 presentationId={presentationId}
+                previewScene={previewScene}
               />
             </div>
           ) : (
@@ -254,36 +283,19 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
           )}
         </div>
 
-        {/* ── Right side panels ── */}
+        {/* ── History side panel ── */}
         {openPanel === 'history' && (
           <HistoryPanel
             presentationId={presentationId}
             slideId={currentSlide?.id ?? ''}
             onClose={() => setOpenPanel(null)}
             onRestore={() => { setOpenPanel(null); void loadPresentation(); }}
+            onPreviewScene={setPreviewScene}
           />
-        )}
-        {openPanel === 'libraries' && (
-          <aside class="side-panel" aria-label="Library management">
-            <div class="side-panel-header">
-              <h2>Libraries</h2>
-              <button class="panel-close-btn" onClick={() => setOpenPanel(null)} aria-label="Close">✕</button>
-            </div>
-            <div class="side-panel-body">
-              <LibraryUploader
-                presentationId={presentationId}
-                onLibraryUploaded={() => {
-                  // Library saved to server — Excalidraw will reload it via
-                  // useHandleLibrary on the next mount (when the editor re-opens).
-                  // No in-place refresh needed; users can reopen to pick it up.
-                }}
-              />
-            </div>
-          </aside>
         )}
       </div>
 
-      {/* ── Modal panels (share, export, settings) ── */}
+      {/* ── Modal panels ── */}
       {openPanel === 'share' && (
         <ShareModal presentationId={presentationId} onClose={() => setOpenPanel(null)} />
       )}
