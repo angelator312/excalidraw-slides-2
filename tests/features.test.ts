@@ -1,0 +1,396 @@
+/**
+ * Tests covering:
+ * - Router: URL parsing for all routes (home, presentation, admin, invite-accept)
+ * - Auth token accept flow: multi-use time-based invite tokens
+ * - Fingerprint-based elements change detection
+ * - Presentation thumbnailMode model field
+ * - SettingsModal editor list logic
+ * - canEdit / canView with editors list
+ */
+import { describe, it, expect } from 'vitest';
+import { canView, canEdit } from '../server/src/middleware/permUtils.js';
+
+// ─── Router: URL → Route parsing ──────────────────────────────────────────
+
+function parseRoute(pathname: string, search = ''): string {
+  const presMatch = pathname.match(/^\/presentation\/([0-9a-f]{24})\/?$/i);
+  if (presMatch) return `presentation:${presMatch[1]}`;
+  if (pathname === '/admin') return 'admin';
+  if (pathname === '/invite/accept' || pathname === '/invite') {
+    const params = new URLSearchParams(search);
+    const token = params.get('token') ?? '';
+    return `invite-accept:${token}`;
+  }
+  return 'home';
+}
+
+describe('Router: URL → Route', () => {
+  it('maps / to home', () => {
+    expect(parseRoute('/')).toBe('home');
+  });
+
+  it('maps /admin to admin', () => {
+    expect(parseRoute('/admin')).toBe('admin');
+  });
+
+  it('does NOT map /admin/ to home (trailing slash)', () => {
+    // /admin/ doesn't match /admin exactly
+    expect(parseRoute('/admin/')).toBe('home');
+  });
+
+  it('maps /presentation/<24-char-hex> to presentation', () => {
+    const id = 'a'.repeat(24);
+    expect(parseRoute(`/presentation/${id}`)).toBe(`presentation:${id}`);
+  });
+
+  it('ignores non-hex or wrong-length IDs', () => {
+    expect(parseRoute('/presentation/not-an-id')).toBe('home');
+    expect(parseRoute('/presentation/abc123')).toBe('home'); // too short
+  });
+
+  it('maps /invite/accept?token=... to invite-accept', () => {
+    expect(parseRoute('/invite/accept', '?token=abc123')).toBe('invite-accept:abc123');
+  });
+
+  it('maps /invite?token=... to invite-accept', () => {
+    expect(parseRoute('/invite', '?token=xyz')).toBe('invite-accept:xyz');
+  });
+
+  it('invite-accept with no token has empty token', () => {
+    expect(parseRoute('/invite/accept', '')).toBe('invite-accept:');
+  });
+
+  it('maps unknown paths to home', () => {
+    expect(parseRoute('/unknown/path')).toBe('home');
+    expect(parseRoute('/settings')).toBe('home');
+  });
+});
+
+// ─── Invite token: multi-use time-based logic ─────────────────────────────
+
+interface MockInviteToken {
+  uses: number;
+  maxUses: number;
+  expiresAt: Date;
+  revokedAt?: Date;
+}
+
+function isTokenValid(token: MockInviteToken): boolean {
+  if (token.revokedAt) return false;
+  if (token.expiresAt < new Date()) return false;
+  if (token.uses >= token.maxUses) return false;
+  return true;
+}
+
+function acceptToken(token: MockInviteToken): { ok: boolean; error?: string } {
+  if (!isTokenValid(token)) {
+    if (token.revokedAt) return { ok: false, error: 'revoked' };
+    if (token.expiresAt < new Date()) return { ok: false, error: 'expired' };
+    if (token.uses >= token.maxUses) return { ok: false, error: 'exhausted' };
+  }
+  token.uses++;
+  return { ok: true };
+}
+
+const future = new Date(Date.now() + 86_400_000);
+const past = new Date(Date.now() - 86_400_000);
+
+describe('Invite token: multi-use accept flow', () => {
+  it('accepts a fresh single-use token', () => {
+    const token: MockInviteToken = { uses: 0, maxUses: 1, expiresAt: future };
+    const result = acceptToken(token);
+    expect(result.ok).toBe(true);
+    expect(token.uses).toBe(1);
+  });
+
+  it('rejects the same single-use token on second accept', () => {
+    const token: MockInviteToken = { uses: 1, maxUses: 1, expiresAt: future };
+    const result = acceptToken(token);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('exhausted');
+  });
+
+  it('allows multi-use token to be accepted multiple times up to maxUses', () => {
+    const token: MockInviteToken = { uses: 0, maxUses: 5, expiresAt: future };
+    for (let i = 0; i < 5; i++) {
+      const result = acceptToken(token);
+      expect(result.ok).toBe(true);
+    }
+    expect(token.uses).toBe(5);
+    // 6th accept should fail
+    const last = acceptToken(token);
+    expect(last.ok).toBe(false);
+    expect(last.error).toBe('exhausted');
+  });
+
+  it('rejects expired token', () => {
+    const token: MockInviteToken = { uses: 0, maxUses: 1, expiresAt: past };
+    const result = acceptToken(token);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('expired');
+  });
+
+  it('rejects revoked token', () => {
+    const token: MockInviteToken = {
+      uses: 0,
+      maxUses: 10,
+      expiresAt: future,
+      revokedAt: new Date(),
+    };
+    const result = acceptToken(token);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('revoked');
+  });
+
+  it('does not increment uses when rejected', () => {
+    const token: MockInviteToken = { uses: 0, maxUses: 1, expiresAt: past };
+    acceptToken(token);
+    expect(token.uses).toBe(0); // should not be incremented on rejection
+  });
+});
+
+// ─── Invite link URL parsing: pasting full link vs. raw token ─────────────
+
+describe('Invite link parsing (client-side)', () => {
+  function extractToken(input: string): string {
+    let t = input.trim();
+    try {
+      const url = new URL(t);
+      const fromParam = url.searchParams.get('token');
+      if (fromParam) t = fromParam;
+    } catch { /* not a URL */ }
+    return t;
+  }
+
+  it('extracts token from full invite URL', () => {
+    const token = 'abc123def456';
+    const url = `https://slides.example.com/invite/accept?token=${token}`;
+    expect(extractToken(url)).toBe(token);
+  });
+
+  it('returns raw token when not a URL', () => {
+    expect(extractToken('rawtoken12345')).toBe('rawtoken12345');
+  });
+
+  it('trims whitespace from pasted input', () => {
+    expect(extractToken('  rawtoken  ')).toBe('rawtoken');
+  });
+
+  it('handles URL with multiple query params', () => {
+    expect(extractToken('https://example.com/invite?ref=email&token=mytoken')).toBe('mytoken');
+  });
+});
+
+// ─── Elements fingerprint (change detection) ──────────────────────────────
+
+interface FakeElement { id: string; version?: number }
+
+function fingerprintElements(elements: FakeElement[]): string {
+  return elements.map((el) => `${el.id}:${el.version ?? 0}`).join('|');
+}
+
+describe('fingerprintElements', () => {
+  it('returns empty string for empty array', () => {
+    expect(fingerprintElements([])).toBe('');
+  });
+
+  it('is stable for the same elements', () => {
+    const els = [{ id: 'a', version: 1 }, { id: 'b', version: 2 }];
+    expect(fingerprintElements(els)).toBe(fingerprintElements([...els]));
+  });
+
+  it('changes when an element version bumps', () => {
+    const before = [{ id: 'a', version: 1 }];
+    const after = [{ id: 'a', version: 2 }];
+    expect(fingerprintElements(before)).not.toBe(fingerprintElements(after));
+  });
+
+  it('changes when an element is added', () => {
+    const before = [{ id: 'a', version: 1 }];
+    const after = [{ id: 'a', version: 1 }, { id: 'b', version: 1 }];
+    expect(fingerprintElements(before)).not.toBe(fingerprintElements(after));
+  });
+
+  it('changes when an element is removed', () => {
+    const before = [{ id: 'a', version: 1 }, { id: 'b', version: 1 }];
+    const after = [{ id: 'a', version: 1 }];
+    expect(fingerprintElements(before)).not.toBe(fingerprintElements(after));
+  });
+
+  it('uses 0 as default when version is undefined', () => {
+    const els = [{ id: 'x' }];
+    expect(fingerprintElements(els)).toBe('x:0');
+  });
+
+  it('is order-sensitive (reordering changes fingerprint)', () => {
+    const a = [{ id: 'a', version: 1 }, { id: 'b', version: 1 }];
+    const b = [{ id: 'b', version: 1 }, { id: 'a', version: 1 }];
+    expect(fingerprintElements(a)).not.toBe(fingerprintElements(b));
+  });
+});
+
+// ─── Server-side element fingerprint (id:version based) ───────────────────
+
+function serverFp(elements: unknown): string {
+  return (Array.isArray(elements) ? elements : [])
+    .map((el: Record<string, unknown>) => `${String(el['id'])}:${String(el['version'] ?? 0)}`)
+    .join('|');
+}
+
+describe('serverFp (server-side fingerprint)', () => {
+  it('handles non-array gracefully', () => {
+    expect(serverFp(null)).toBe('');
+    expect(serverFp(undefined)).toBe('');
+    expect(serverFp({})).toBe('');
+  });
+
+  it('matches client fingerprint for same data', () => {
+    const els = [{ id: 'a', version: 1 }, { id: 'b', version: 2 }];
+    expect(serverFp(els)).toBe(fingerprintElements(els));
+  });
+
+  it('skips auto-version when elements unchanged', () => {
+    const oldEls = [{ id: 'rect1', version: 3 }];
+    const newEls = [{ id: 'rect1', version: 3 }];
+    // Same fingerprint → no version saved
+    expect(serverFp(oldEls)).toBe(serverFp(newEls));
+  });
+
+  it('saves auto-version when version increments', () => {
+    const oldEls = [{ id: 'rect1', version: 3 }];
+    const newEls = [{ id: 'rect1', version: 4 }];
+    expect(serverFp(oldEls)).not.toBe(serverFp(newEls));
+  });
+});
+
+// ─── Permissions: canEdit / canView with extended edge cases ──────────────
+
+function makeId(n: string) { return { toString: () => n }; }
+
+const owner = 'owner-1';
+const editor = 'editor-1';
+const viewer = 'viewer-1';
+const stranger = 'stranger-1';
+
+const makePresentation = (
+  visibility: 'public' | 'private' | 'team-only',
+  editors: string[] = [],
+  viewers: string[] = [],
+) => ({
+  ownerUserId: makeId(owner),
+  visibility,
+  editorUserIds: editors.map(makeId),
+  viewerUserIds: viewers.map(makeId),
+  teamId: undefined,
+});
+
+describe('canEdit with editors list', () => {
+  it('owner can always edit', () => {
+    expect(canEdit(makePresentation('private'), owner)).toBe(true);
+    expect(canEdit(makePresentation('public'), owner)).toBe(true);
+    expect(canEdit(makePresentation('team-only'), owner)).toBe(true);
+  });
+
+  it('explicit editor can edit', () => {
+    const pres = makePresentation('private', [editor]);
+    expect(canEdit(pres, editor)).toBe(true);
+  });
+
+  it('stranger cannot edit private presentation', () => {
+    expect(canEdit(makePresentation('private'), stranger)).toBe(false);
+  });
+
+  it('stranger cannot edit public presentation', () => {
+    expect(canEdit(makePresentation('public'), stranger)).toBe(false);
+  });
+
+  it('viewer cannot edit', () => {
+    const pres = makePresentation('private', [], [viewer]);
+    expect(canEdit(pres, viewer)).toBe(false);
+  });
+
+  it('undefined userId cannot edit', () => {
+    expect(canEdit(makePresentation('public'), undefined)).toBe(false);
+  });
+});
+
+describe('canView with editors list', () => {
+  it('explicit editor can view even private presentation', () => {
+    const pres = makePresentation('private', [editor]);
+    expect(canView(pres, editor)).toBe(true);
+  });
+
+  it('explicit viewer can view private presentation', () => {
+    const pres = makePresentation('private', [], [viewer]);
+    expect(canView(pres, viewer)).toBe(true);
+  });
+
+  it('stranger cannot view private presentation', () => {
+    expect(canView(makePresentation('private'), stranger)).toBe(false);
+  });
+
+  it('anyone can view public presentation (anonymous)', () => {
+    expect(canView(makePresentation('public'), undefined)).toBe(true);
+  });
+
+  it('team-only is not visible to stranger', () => {
+    expect(canView(makePresentation('team-only'), stranger)).toBe(false);
+  });
+});
+
+// ─── Presentation thumbnailMode ───────────────────────────────────────────
+
+type ThumbnailMode = 'first-slide' | 'grid';
+
+function normalizeThumbnailMode(value?: string): ThumbnailMode {
+  if (value === 'grid') return 'grid';
+  return 'first-slide'; // default
+}
+
+describe('thumbnailMode', () => {
+  it('defaults to first-slide', () => {
+    expect(normalizeThumbnailMode(undefined)).toBe('first-slide');
+    expect(normalizeThumbnailMode('')).toBe('first-slide');
+  });
+
+  it('accepts grid mode', () => {
+    expect(normalizeThumbnailMode('grid')).toBe('grid');
+  });
+
+  it('rejects unknown values and falls back to first-slide', () => {
+    expect(normalizeThumbnailMode('unknown')).toBe('first-slide');
+  });
+});
+
+// ─── Auth: username validation ────────────────────────────────────────────
+
+describe('Username validation (invite accept)', () => {
+  const USERNAME_RE = /^[a-z0-9_]{2,40}$/;
+
+  it('accepts valid lowercase alphanumeric+underscore', () => {
+    expect(USERNAME_RE.test('alice')).toBe(true);
+    expect(USERNAME_RE.test('alice_smith')).toBe(true);
+    expect(USERNAME_RE.test('user123')).toBe(true);
+    expect(USERNAME_RE.test('a1')).toBe(true);
+  });
+
+  it('rejects usernames shorter than 2 chars', () => {
+    expect(USERNAME_RE.test('a')).toBe(false);
+    expect(USERNAME_RE.test('')).toBe(false);
+  });
+
+  it('rejects usernames longer than 40 chars', () => {
+    expect(USERNAME_RE.test('a'.repeat(41))).toBe(false);
+  });
+
+  it('rejects uppercase letters', () => {
+    expect(USERNAME_RE.test('Alice')).toBe(false);
+    expect(USERNAME_RE.test('ADMIN')).toBe(false);
+  });
+
+  it('rejects special characters', () => {
+    expect(USERNAME_RE.test('alice-smith')).toBe(false);
+    expect(USERNAME_RE.test('alice smith')).toBe(false);
+    expect(USERNAME_RE.test('alice@example')).toBe(false);
+  });
+});

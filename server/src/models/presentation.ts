@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
 export type Visibility = 'public' | 'private' | 'team-only';
+export type ThumbnailMode = 'first-slide' | 'grid';
 
 export interface IPresentation extends Document {
   _id: Types.ObjectId;
@@ -13,6 +14,8 @@ export interface IPresentation extends Document {
   /** Explicit user IDs allowed to view (used only when visibility=private) */
   viewerUserIds: Types.ObjectId[];
   slideCount: number;
+  /** How to show the thumbnail on the presentation card */
+  thumbnailMode: ThumbnailMode;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -30,6 +33,7 @@ const PresentationSchema = new Schema<IPresentation>(
     editorUserIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     viewerUserIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
     slideCount: { type: Number, default: 0 },
+    thumbnailMode: { type: String, enum: ['first-slide', 'grid'], default: 'first-slide' },
   },
   { timestamps: true },
 );

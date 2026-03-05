@@ -2,12 +2,26 @@ import { useState, useEffect } from 'preact/hooks';
 
 export type Route =
   | { path: 'home' }
-  | { path: 'presentation'; id: string };
+  | { path: 'presentation'; id: string }
+  | { path: 'admin' }
+  | { path: 'invite-accept'; token: string };
 
 function parseRoute(): Route {
   const pathname = window.location.pathname;
-  const match = pathname.match(/^\/presentation\/([0-9a-f]{24})\/?$/i);
-  if (match && match[1]) return { path: 'presentation', id: match[1] };
+  const search = window.location.search;
+
+  const presMatch = pathname.match(/^\/presentation\/([0-9a-f]{24})\/?$/i);
+  if (presMatch && presMatch[1]) return { path: 'presentation', id: presMatch[1] };
+
+  if (pathname === '/admin') return { path: 'admin' };
+
+  // /invite/accept?token=...
+  if (pathname === '/invite/accept' || pathname === '/invite') {
+    const params = new URLSearchParams(search);
+    const token = params.get('token') ?? '';
+    return { path: 'invite-accept', token };
+  }
+
   return { path: 'home' };
 }
 
@@ -27,6 +41,7 @@ export function useRouter() {
 
   const navigateToPresentation = (id: string) => navigate(`/presentation/${id}`);
   const navigateHome = () => navigate('/');
+  const navigateAdmin = () => navigate('/admin');
 
-  return { route, navigate, navigateToPresentation, navigateHome };
+  return { route, navigate, navigateToPresentation, navigateHome, navigateAdmin };
 }

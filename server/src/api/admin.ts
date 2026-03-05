@@ -194,6 +194,18 @@ router.get('/invite', requireOwner, async (_req, res) => {
   res.json(tokens);
 });
 
+/**
+ * GET /api/admin/users
+ * List all registered (non-anonymous) users (owner only).
+ */
+router.get('/users', requireOwner, async (_req, res) => {
+  const userList = await User.find({ role: { $ne: 'anonymous' } })
+    .select('_id username displayName role createdAt')
+    .sort({ createdAt: -1 })
+    .lean();
+  res.json(userList);
+});
+
 /* ──────────────────────── Impersonation ──────────────────────── */
 
 /**

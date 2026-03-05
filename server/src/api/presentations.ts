@@ -35,6 +35,7 @@ router.get('/', optionalAuth, async (req: AuthenticatedRequest, res) => {
     slideCount: p.slideCount,
     updatedAt: p.updatedAt,
     canEdit: userId ? userCanEdit(p, userId.toString()) : false,
+    thumbnailMode: p.thumbnailMode ?? 'first-slide',
   }));
 
   res.json(result);
@@ -52,7 +53,11 @@ router.get('/:id', optionalAuth, async (req: AuthenticatedRequest, res) => {
   }
 
   const slides = await Slide.find({ presentationId: pres._id }).sort({ index: 1 }).lean();
-  const owner = await User.findById(pres.ownerUserId).select('username').lean();
+  const owner = await User.findById(pres.ownerUserId).select('username displayName').lean();
+  // Fetch editor display info for the settings panel
+  const editors = await User.find({ _id: { $in: pres.editorUserIds } })
+    .select('_id username displayName')
+    .lean();
 
   res.json({
     _id: pres._id,
@@ -60,6 +65,8 @@ router.get('/:id', optionalAuth, async (req: AuthenticatedRequest, res) => {
     visibility: pres.visibility,
     ownerUsername: owner?.username ?? 'unknown',
     canEdit: userId ? userCanEdit(pres, userId) : false,
+    editors: editors.map((e) => ({ _id: e._id.toString(), username: e.username, displayName: e.displayName })),
+    thumbnailMode: pres.thumbnailMode ?? 'first-slide',
     slides: slides.map((s) => ({
       id: s._id.toString(),
       presentationId: s.presentationId.toString(),
@@ -111,10 +118,11 @@ router.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
     res.status(403).json({ error: 'Access denied' }); return;
   }
 
-  const { title, visibility, teamId } = req.body as {
+  const { title, visibility, teamId, thumbnailMode } = req.body as {
     title?: string;
     visibility?: string;
     teamId?: string | null;
+    thumbnailMode?: string;
   };
 
   if (title) pres.title = title.trim();
@@ -123,6 +131,9 @@ router.patch('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
   }
   if (teamId !== undefined) {
     pres.teamId = teamId ? (teamId as unknown as Types.ObjectId) : undefined;
+  }
+  if (thumbnailMode && ['first-slide', 'grid'].includes(thumbnailMode)) {
+    pres.thumbnailMode = thumbnailMode as 'first-slide' | 'grid';
   }
   await pres.save();
   res.json(pres);

@@ -22,6 +22,8 @@ export interface PresentationDetail {
   visibility: 'public' | 'private' | 'team-only';
   ownerUsername: string;
   canEdit: boolean;
+  editors: Array<{ _id: string; username: string; displayName: string }>;
+  thumbnailMode?: 'first-slide' | 'grid';
   slides: SlideRef[];
 }
 
@@ -235,11 +237,16 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
             Export
           </button>
           <button
-            class={`btn-toolbar ${openPanel === 'settings' ? 'active' : ''}`}
+            class={`btn-toolbar btn-toolbar--icon ${openPanel === 'settings' ? 'active' : ''}`}
             onClick={() => togglePanel('settings')}
             title="Settings"
-            aria-pressed={openPanel === 'settings'}>
-            ⚙
+            aria-pressed={openPanel === 'settings'}
+            aria-label="Settings"
+          >
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="10" r="2.5" stroke="currentColor" stroke-width="1.6"/>
+              <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
           </button>
           <button class="btn-present" onClick={() => setMode('present')}>
             <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
@@ -271,7 +278,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
             >
               <ExcalidrawViewer
                 slide={currentSlide}
-                viewMode={!pres.canEdit}
+                viewMode={!pres.canEdit || openPanel === 'history'}
                 onChange={pres.canEdit ? handleSceneChange : undefined}
                 onThumbnailChange={handleThumbnailChange}
                 presentationId={presentationId}
