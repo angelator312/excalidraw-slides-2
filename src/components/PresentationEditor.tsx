@@ -10,7 +10,6 @@ import { ExportModal } from '../presentation/ExportModal';
 import { ExcalidrawViewer } from './ExcalidrawViewer';
 import { rtcClient } from '../presentation/rtc';
 import type { Presence } from '../presentation/rtc';
-import { broadcastPointer, hidePointer } from '../presentation/laserPointer';
 import { useAuth } from '../hooks/useAuth';
 
 interface Props {
@@ -25,6 +24,8 @@ export interface PresentationDetail {
   ownerUsername: string;
   canEdit: boolean;
   editors: Array<{ _id: string; username: string; displayName: string }>;
+  /** All collaborators with their role */
+  collaborators?: Array<{ _id: string; username: string; displayName: string; role: 'editor' | 'viewer' }>;
   thumbnailMode?: 'first-slide' | 'grid';
   teamId?: string;
   slides: SlideRef[];
@@ -60,6 +61,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
 
   /** Slide nav panel width (resizable via drag handle) */
   const [slideNavWidth, setSlideNavWidth] = useState(180);
+  /** Whether the slide nav panel is visible */
+  const [slideNavVisible, setSlideNavVisible] = useState(true);
   const slideNavResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const handleNavResizeMouseDown = (e: MouseEvent) => {
@@ -86,41 +89,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   /** Ref to the slide canvas wrapper for collab laser hit-testing */
   const canvasWrapRef = useRef<HTMLDivElement>(null);
 
-  // Always broadcast cursor position when hovering over canvas (for named cursors)
-  // The collab laser additionally broadcasts on drag (sends pointer visible=true)
-  useEffect(() => {
-    if (!canvasWrapRef.current) return;
-    const el = canvasWrapRef.current;
-    let laserDown = false;
-
-    const onMouseMove = (e: MouseEvent) => {
-      const rect = el.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      if (collabLaser && laserDown) {
-        // Collab laser: broadcast visible pointer
-        broadcastPointer(x, y);
-      } else {
-        // Always send cursor position so others see the cursor name tag
-        rtcClient.sendPointerMove(x, y, /* visible */ true);
-      }
-    };
-    const onMouseDown = () => { laserDown = true; };
-    const onMouseUp = () => { laserDown = false; if (collabLaser) hidePointer(); };
-    const onMouseLeave = () => { laserDown = false; rtcClient.sendPointerMove(0, 0, false); };
-
-    el.addEventListener('mousemove', onMouseMove);
-    el.addEventListener('mousedown', onMouseDown);
-    el.addEventListener('mouseup', onMouseUp);
-    el.addEventListener('mouseleave', onMouseLeave);
-    return () => {
-      el.removeEventListener('mousemove', onMouseMove);
-      el.removeEventListener('mousedown', onMouseDown);
-      el.removeEventListener('mouseup', onMouseUp);
-      el.removeEventListener('mouseleave', onMouseLeave);
-      rtcClient.sendPointerMove(0, 0, false);
-    };
-  }, [collabLaser]);
+  // Cursor broadcasting is now handled inside ExcalidrawCanvas via its wrapper mousemove listener.
+  // The collabLaser state is passed as the `enableCollabLaser` prop to ExcalidrawViewer/Canvas.
 
   // Close panel on Escape
   useEffect(() => {
@@ -420,26 +390,48 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
 
       {/* ── Body ── */}
       <div class="editor-body">
-        <SlideNav
-          slides={pres.slides}
-          currentIndex={currentIndex}
-          onSelect={handleSlideSelect}
-          canEdit={pres.canEdit}
-          presentationId={presentationId}
-          onSlidesChange={(slides) => setPres((p) => p ? { ...p, slides } : p)}
-          onRename={handleSlideRename}
-          thumbnails={thumbnails}
-          style={{ width: `${slideNavWidth}px`, flexShrink: 0 }}
-        />
-        {/* Drag handle to resize the slide nav panel */}
-        <div
-          class="slide-nav-resize-handle"
-          onMouseDown={handleNavResizeMouseDown}
-          aria-label="Resize slide panel"
-          title="Drag to resize"
-          role="separator"
-          aria-orientation="vertical"
-        />
+        {slideNavVisible && (
+          <SlideNav
+            slides={pres.slides}
+            currentIndex={currentIndex}
+            onSelect={handleSlideSelect}
+            canEdit={pres.canEdit}
+            presentationId={presentationId}
+            onSlidesChange={(slides) => setPres((p) => p ? { ...p, slides } : p)}
+            onRename={handleSlideRename}
+            thumbnails={thumbnails}
+            style={{ width: `${slideNavWidth}px`, flexShrink: 0 }}
+          />
+        )}
+        {slideNavVisible && (
+          /* Drag handle to resize the slide nav panel */
+          <div
+            class="slide-nav-resize-handle"
+            onMouseDown={handleNavResizeMouseDown}
+            aria-label="Resize slide panel"
+            title="Drag to resize"
+            role="separator"
+            aria-orientation="vertical"
+          />
+        )}
+        {/* Toggle button to show/hide slide panel */}
+        <button
+          class="slide-nav-toggle"
+          onClick={() => setSlideNavVisible((v) => !v)}
+          aria-label={slideNavVisible ? 'Hide slides panel' : 'Show slides panel'}
+          title={slideNavVisible ? 'Hide slides panel' : 'Show slides panel'}
+          aria-pressed={slideNavVisible}
+        >
+          {slideNavVisible ? (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M9 2L4 7l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M5 2l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          )}
+        </button>
 
         <div class="slide-canvas-area">
           {currentSlide ? (

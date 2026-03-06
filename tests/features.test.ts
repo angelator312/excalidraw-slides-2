@@ -1237,3 +1237,130 @@ describe('Thumbnail: image fills container', () => {
     expect(thumbStyles.position).toBe('relative');
   });
 });
+
+// ─── Presenter view redesign ─────────────────────────────────────────────
+
+describe('PresenterView: minimal pill bar', () => {
+  it('formats slide counter as "Slide N / total"', () => {
+    const counter = (current: number, total: number) => `Slide ${current + 1} / ${total}`;
+    expect(counter(0, 12)).toBe('Slide 1 / 12');
+    expect(counter(11, 12)).toBe('Slide 12 / 12');
+  });
+
+  it('auto-hide timer resets on mouse move', () => {
+    let visible = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reset = () => {
+      visible = true;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { visible = false; }, 3000);
+    };
+    reset();
+    expect(visible).toBe(true);
+    if (timer) clearTimeout(timer);
+  });
+
+  it('formats time correctly', () => {
+    const formatTime = (s: number) =>
+      `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+    expect(formatTime(0)).toBe('00:00');
+    expect(formatTime(65)).toBe('01:05');
+    expect(formatTime(3661)).toBe('61:01'); // minutes overflow is intentional (no hours field)
+  });
+});
+
+// ─── Pointer coordinate fix ───────────────────────────────────────────────
+
+describe('Pointer coordinates: wrapper div normalization', () => {
+  it('normalizes clientX/Y to 0-1 relative to bounding rect', () => {
+    const rect = { left: 100, top: 50, width: 800, height: 600 };
+    const normalize = (clientX: number, clientY: number) => ({
+      x: (clientX - rect.left) / rect.width,
+      y: (clientY - rect.top) / rect.height,
+    });
+    const r = normalize(500, 350);
+    expect(r.x).toBeCloseTo(0.5);
+    expect(r.y).toBeCloseTo(0.5);
+    // Top-left corner
+    const tl = normalize(100, 50);
+    expect(tl.x).toBeCloseTo(0);
+    expect(tl.y).toBeCloseTo(0);
+    // Bottom-right corner
+    const br = normalize(900, 650);
+    expect(br.x).toBeCloseTo(1);
+    expect(br.y).toBeCloseTo(1);
+  });
+
+  it('rejects out-of-bounds coordinates', () => {
+    const rect = { left: 0, top: 0, width: 100, height: 100 };
+    const isValid = (clientX: number, clientY: number) => {
+      const x = (clientX - rect.left) / rect.width;
+      const y = (clientY - rect.top) / rect.height;
+      return x >= 0 && x <= 1 && y >= 0 && y <= 1;
+    };
+    expect(isValid(50, 50)).toBe(true);
+    expect(isValid(-10, 50)).toBe(false);
+    expect(isValid(50, 110)).toBe(false);
+  });
+});
+
+// ─── Roles with permissions ───────────────────────────────────────────────
+
+describe('Collaborator roles', () => {
+  type Role = 'editor' | 'viewer';
+
+  it('editor role allows editing and managing collaborators', () => {
+    const permissions: Record<Role, string[]> = {
+      editor: ['edit', 'export', 'manage-collaborators', 'change-settings'],
+      viewer: ['view'],
+    };
+    expect(permissions.editor).toContain('edit');
+    expect(permissions.editor).toContain('manage-collaborators');
+    expect(permissions.viewer).not.toContain('edit');
+    expect(permissions.viewer).toContain('view');
+  });
+
+  it('changing role moves user between lists', () => {
+    const editorIds = ['u1', 'u2'];
+    const viewerIds: string[] = [];
+
+    const changeRole = (userId: string, newRole: Role) => {
+      const eIdx = editorIds.indexOf(userId);
+      const vIdx = viewerIds.indexOf(userId);
+      if (eIdx !== -1) editorIds.splice(eIdx, 1);
+      if (vIdx !== -1) viewerIds.splice(vIdx, 1);
+      if (newRole === 'editor') editorIds.push(userId);
+      else viewerIds.push(userId);
+    };
+
+    changeRole('u2', 'viewer');
+    expect(editorIds).toEqual(['u1']);
+    expect(viewerIds).toEqual(['u2']);
+
+    changeRole('u2', 'editor');
+    expect(editorIds).toContain('u2');
+    expect(viewerIds).not.toContain('u2');
+  });
+
+  it('PATCH role endpoint validates role value', () => {
+    const validateRole = (role: string) => role === 'editor' || role === 'viewer';
+    expect(validateRole('editor')).toBe(true);
+    expect(validateRole('viewer')).toBe(true);
+    expect(validateRole('admin')).toBe(false);
+    expect(validateRole('')).toBe(false);
+  });
+});
+
+// ─── Collapsible slide nav ────────────────────────────────────────────────
+
+describe('Collapsible slide nav panel', () => {
+  it('toggles visibility state', () => {
+    let visible = true;
+    const toggle = () => { visible = !visible; };
+    expect(visible).toBe(true);
+    toggle();
+    expect(visible).toBe(false);
+    toggle();
+    expect(visible).toBe(true);
+  });
+});

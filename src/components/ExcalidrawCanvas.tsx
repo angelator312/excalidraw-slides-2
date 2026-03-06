@@ -270,6 +270,31 @@ export default function ExcalidrawCanvas({
     if (thumbTimerRef.current) clearTimeout(thumbTimerRef.current);
   }, []);
 
+  // Broadcast cursor/laser position via wrapper div mousemove (no scene-coordinate conversion).
+  // When enableCollabLaser=true, always broadcasts visible=true while hovering; hides on leave.
+  // When enableCollabLaser=false, broadcasts visible=true on every mousemove (for named cursors).
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const onMove = (e: MouseEvent) => {
+      const rect = el.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      if (x < 0 || x > 1 || y < 0 || y > 1) return;
+      broadcastPointer(x, y);
+    };
+    const onLeave = () => hidePointer();
+
+    el.addEventListener('mousemove', onMove);
+    el.addEventListener('mouseleave', onLeave);
+    return () => {
+      el.removeEventListener('mousemove', onMove);
+      el.removeEventListener('mouseleave', onLeave);
+      hidePointer();
+    };
+  }, [enableCollabLaser]);
+
   const handleChange = (
     elements: readonly OrderedExcalidrawElement[],
     appState: AppState,
@@ -362,24 +387,10 @@ export default function ExcalidrawCanvas({
         onChange={viewMode ? undefined : handleChange}
         onLibraryChange={viewMode ? undefined : handleLibraryChange}
         onPointerUpdate={enableCollabLaser ? (payload) => {
-          const { pointer } = payload as { pointer: { x: number; y: number; tool: string } };
-          if (pointer.tool === 'laser') {
-            const el = wrapperRef.current;
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              const api = apiRef.current;
-              if (api) {
-                const state = api.getAppState();
-                const sx = (pointer.x - state.scrollX) * state.zoom.value + rect.width / 2;
-                const sy = (pointer.y - state.scrollY) * state.zoom.value + rect.height / 2;
-                const nx = sx / rect.width;
-                const ny = sy / rect.height;
-                if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
-                  broadcastPointer(nx, ny);
-                }
-              }
-            }
-          } else {
+          // Only use onPointerUpdate to detect when the laser tool deactivates.
+          // Actual coordinate broadcasting is done via the wrapper mousemove listener above.
+          const { pointer } = payload as { pointer: { tool: string } };
+          if (pointer.tool !== 'laser') {
             hidePointer();
           }
         } : undefined}

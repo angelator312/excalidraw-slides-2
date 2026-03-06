@@ -2,7 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'preact/hooks';
 import type { SlideRef } from './slideModel';
 import { rtcClient } from './rtc';
 import type { Presence } from './rtc';
-import { broadcastPointer, hidePointer } from './laserPointer';
+import { hidePointer } from './laserPointer';
 import { ExcalidrawViewer } from '../components/ExcalidrawViewer';
 
 interface Props {
@@ -33,18 +33,15 @@ export function PresenterView({
   const [elapsed, setElapsed] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
   const [notes, setNotes] = useState(slides[currentIndex]?.notes ?? '');
-  const [laserActive, setLaserActive] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
-  const [showPeople, setShowPeople] = useState(false);
-  const [hudVisible, setHudVisible] = useState(true);
+  const [barVisible, setBarVisible] = useState(true);
   const [presence, setPresence] = useState<Presence[]>([]);
   /** userId → {x, y, displayName, color} for named laser/pointer overlays */
   const [remotePointers, setRemotePointers] = useState<
     Map<string, { x: number; y: number; displayName: string; color: string }>
   >(new Map());
-  const slideAreaRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const hudHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const barHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceRef = useRef<Presence[]>([]);
   presenceRef.current = presence;
 
@@ -95,54 +92,30 @@ export function PresenterView({
         return next;
       });
     });
-    return () => { unsubPresence(); unsubPointer(); };
-  }, [currentUserId]);
-
-  // Local laser pointer broadcasting
-  useEffect(() => {
-    if (!laserActive || !slideAreaRef.current) return;
-    const el = slideAreaRef.current;
-    let active = false;
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (!active) return;
-      const rect = el.getBoundingClientRect();
-      broadcastPointer((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
-    };
-    const onMouseDown = () => { active = true; };
-    const onMouseUp = () => { active = false; hidePointer(); };
-    const onMouseLeave = () => { active = false; hidePointer(); };
-
-    el.addEventListener('mousemove', onMouseMove);
-    el.addEventListener('mousedown', onMouseDown);
-    el.addEventListener('mouseup', onMouseUp);
-    el.addEventListener('mouseleave', onMouseLeave);
     return () => {
-      el.removeEventListener('mousemove', onMouseMove);
-      el.removeEventListener('mousedown', onMouseDown);
-      el.removeEventListener('mouseup', onMouseUp);
-      el.removeEventListener('mouseleave', onMouseLeave);
+      unsubPresence();
+      unsubPointer();
       hidePointer();
     };
-  }, [laserActive]);
+  }, [currentUserId]);
 
-  // HUD auto-hide: show on mouse move, hide after 3s of inactivity
-  const resetHudTimer = useCallback(() => {
-    setHudVisible(true);
-    if (hudHideTimer.current) clearTimeout(hudHideTimer.current);
-    hudHideTimer.current = setTimeout(() => setHudVisible(false), 3000);
+  // Bar auto-hide: show on mouse move, hide after 3s of inactivity
+  const resetBarTimer = useCallback(() => {
+    setBarVisible(true);
+    if (barHideTimer.current) clearTimeout(barHideTimer.current);
+    barHideTimer.current = setTimeout(() => setBarVisible(false), 3000);
   }, []);
 
   useEffect(() => {
-    window.addEventListener('mousemove', resetHudTimer);
-    window.addEventListener('keydown', resetHudTimer);
-    resetHudTimer();
+    window.addEventListener('mousemove', resetBarTimer);
+    window.addEventListener('keydown', resetBarTimer);
+    resetBarTimer();
     return () => {
-      window.removeEventListener('mousemove', resetHudTimer);
-      window.removeEventListener('keydown', resetHudTimer);
-      if (hudHideTimer.current) clearTimeout(hudHideTimer.current);
+      window.removeEventListener('mousemove', resetBarTimer);
+      window.removeEventListener('keydown', resetBarTimer);
+      if (barHideTimer.current) clearTimeout(barHideTimer.current);
     };
-  }, [resetHudTimer]);
+  }, [resetBarTimer]);
 
   // Keyboard navigation
   const currentIndexRef = useRef(currentIndex);
@@ -151,14 +124,13 @@ export function PresenterView({
   slidesLenRef.current = slides.length;
 
   useEffect(() => {
-    if (!canControl) return;
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown') {
+      if (canControl && (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown')) {
         e.preventDefault();
         onSlideChange(Math.min(currentIndexRef.current + 1, slidesLenRef.current - 1));
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+      } else if (canControl && (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp')) {
         e.preventDefault();
         onSlideChange(Math.max(currentIndexRef.current - 1, 0));
       } else if (e.key === 'Escape') {
@@ -187,13 +159,15 @@ export function PresenterView({
 
   const currentSlide = slides[currentIndex];
 
+  const enterFullscreen = () => {
+    const el = document.documentElement;
+    if (el.requestFullscreen) void el.requestFullscreen();
+  };
+
   return (
-    <div class="pv-root" aria-label="Presenter view">
+    <div class="pv-root" aria-label="Presentation viewer">
       {/* ── Full-screen slide canvas ── */}
-      <div
-        class={`pv-slide-area ${laserActive ? 'pv-laser-cursor' : ''}`}
-        ref={slideAreaRef}
-      >
+      <div class="pv-slide-area">
         {currentSlide && (
           <ExcalidrawViewer
             key={`present-main-${currentSlide.id}`}
@@ -201,6 +175,7 @@ export function PresenterView({
             viewMode={true}
             presentationId={presentationId}
             className="pv-excalidraw"
+            enableCollabLaser={true}
           />
         )}
 
@@ -218,106 +193,116 @@ export function PresenterView({
         ))}
       </div>
 
-      {/* ── Auto-hide HUD overlay ── */}
-      <div class={`pv-hud ${hudVisible ? 'pv-hud--visible' : ''}`} role="toolbar" aria-label="Presentation controls">
-        {/* Slide thumbnail strip */}
-        <div class="pv-thumbstrip" role="listbox" aria-label="Slides">
-          {slides.map((s, i) => {
-            const thumb = thumbnails?.get(s.id);
-            return (
-              <button
-                key={s.id}
-                class={`pv-thumb ${i === currentIndex ? 'pv-thumb--active' : ''}`}
-                onClick={() => canControl && onSlideChange(i)}
-                aria-selected={i === currentIndex}
-                aria-label={`Slide ${i + 1}: ${s.title}`}
-                role="option"
-                title={s.title || `Slide ${i + 1}`}
-              >
-                {thumb ? (
-                  <img src={thumb} alt="" class="pv-thumb-img" />
-                ) : (
-                  <span class="pv-thumb-num">{i + 1}</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      {/* ── Minimal floating control bar (Excalidraw-style) ── */}
+      <div class={`pv-bar ${barVisible ? 'pv-bar--visible' : ''}`} role="toolbar" aria-label="Presentation controls">
+        {canControl && (
+          <button
+            class="pv-bar-btn"
+            onClick={prevSlide}
+            disabled={currentIndex === 0}
+            aria-label="Previous slide"
+            title="Previous slide (←)"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        )}
 
-        {/* Controls bar */}
-        <div class="pv-controls">
-          <div class="pv-controls-left">
-            <button class="pv-btn pv-btn--exit" onClick={onExit} title="Exit (Esc)">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-              </svg>
-              Exit
-            </button>
-          </div>
+        <span class="pv-bar-counter" aria-live="polite">
+          Slide {currentIndex + 1} / {slides.length}
+        </span>
 
-          <div class="pv-controls-center">
-            {canControl && (
-              <button class="pv-btn pv-btn--nav" onClick={prevSlide} disabled={currentIndex === 0} aria-label="Previous slide">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </button>
-            )}
-            <span class="pv-counter" aria-live="polite">{currentIndex + 1} / {slides.length}</span>
-            {canControl && (
-              <button class="pv-btn pv-btn--nav" onClick={nextSlide} disabled={currentIndex === slides.length - 1} aria-label="Next slide">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </button>
-            )}
-          </div>
+        {canControl && (
+          <button
+            class="pv-bar-btn"
+            onClick={nextSlide}
+            disabled={currentIndex === slides.length - 1}
+            aria-label="Next slide"
+            title="Next slide (→)"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        )}
 
-          <div class="pv-controls-right">
-            {canControl && (
-              <button
-                class={`pv-btn pv-btn--icon ${laserActive ? 'pv-btn--active' : ''}`}
-                onClick={() => setLaserActive((v) => !v)}
-                title="Laser pointer"
-                aria-pressed={laserActive}
-              >
-                🔴
-              </button>
-            )}
-            <button
-              class={`pv-btn pv-btn--icon ${timerRunning ? 'pv-btn--active' : ''}`}
-              onClick={() => setTimerRunning((v) => !v)}
-              title={timerRunning ? 'Pause timer' : 'Start timer'}
-            >
-              ⏱ {formatTime(elapsed)}
-            </button>
-            <button class="pv-btn pv-btn--icon" onClick={resetTimer} title="Reset timer">↺</button>
-            <button
-              class={`pv-btn pv-btn--icon ${showNotes ? 'pv-btn--active' : ''}`}
-              onClick={() => setShowNotes((v) => !v)}
-              title="Speaker notes"
-              aria-pressed={showNotes}
-            >
-              📝
-            </button>
-            <button
-              class={`pv-btn pv-btn--icon ${showPeople ? 'pv-btn--active' : ''}`}
-              onClick={() => setShowPeople((v) => !v)}
-              title={`People (${presence.length})`}
-              aria-pressed={showPeople}
-            >
-              👥{presence.length > 0 && <span class="pv-people-count">{presence.length}</span>}
-            </button>
-          </div>
-        </div>
+        <div class="pv-bar-sep" aria-hidden="true" />
+
+        {/* Timer */}
+        <button
+          class={`pv-bar-btn ${timerRunning ? 'pv-bar-btn--active' : ''}`}
+          onClick={() => setTimerRunning((v) => !v)}
+          title={timerRunning ? `Pause timer (${formatTime(elapsed)})` : `Start timer${elapsed > 0 ? ` (${formatTime(elapsed)})` : ''}`}
+          aria-label={timerRunning ? 'Pause timer' : 'Start timer'}
+        >
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+            <circle cx="7.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M7.5 5.5v3l2 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M5.5 1.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          {elapsed > 0 && <span class="pv-bar-time">{formatTime(elapsed)}</span>}
+        </button>
+
+        {elapsed > 0 && (
+          <button class="pv-bar-btn" onClick={resetTimer} title="Reset timer" aria-label="Reset timer">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7a5 5 0 1 0 1.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M2 2v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        )}
+
+        {/* Notes */}
+        <button
+          class={`pv-bar-btn ${showNotes ? 'pv-bar-btn--active' : ''}`}
+          onClick={() => setShowNotes((v) => !v)}
+          title="Speaker notes"
+          aria-pressed={showNotes}
+          aria-label="Toggle speaker notes"
+        >
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M4 5h7M4 7.5h5M4 10h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        {/* People count */}
+        {presence.length > 0 && (
+          <span class="pv-bar-people" aria-label={`${presence.length} people watching`} title={`${presence.length} people watching`}>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+              <circle cx="5" cy="4" r="2.5" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M1 11c0-2.2 1.8-4 4-4s4 1.8 4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+              <circle cx="10" cy="4.5" r="1.8" stroke="currentColor" stroke-width="1.3"/>
+              <path d="M11.5 10c0-1.6-1-2.8-2.5-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            </svg>
+            {presence.length}
+          </span>
+        )}
+
+        <div class="pv-bar-sep" aria-hidden="true" />
+
+        {/* Fullscreen */}
+        <button class="pv-bar-btn" onClick={enterFullscreen} title="Fullscreen" aria-label="Enter fullscreen">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M1 4V1h3M10 1h3v3M13 10v3h-3M4 13H1v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        {/* Exit */}
+        <button class="pv-bar-btn pv-bar-btn--exit" onClick={onExit} title="Exit presentation (Esc)" aria-label="Exit presentation">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
       </div>
 
-      {/* ── Notes panel (floating, bottom-left) ── */}
+      {/* ── Speaker notes panel ── */}
       {showNotes && (
-        <div class="pv-panel pv-panel--notes" role="complementary" aria-label="Speaker notes">
-          <div class="pv-panel-header">
+        <div class="pv-notes-panel" role="complementary" aria-label="Speaker notes">
+          <div class="pv-notes-header">
             <span>Speaker notes</span>
-            <button class="pv-btn pv-btn--icon pv-panel-close" onClick={() => setShowNotes(false)} aria-label="Close notes">✕</button>
+            <button class="pv-bar-btn" onClick={() => setShowNotes(false)} aria-label="Close notes">✕</button>
           </div>
           <textarea
             class="pv-notes-editor"
@@ -329,29 +314,6 @@ export function PresenterView({
           />
         </div>
       )}
-
-      {/* ── People panel (floating, bottom-right) ── */}
-      {showPeople && (
-        <div class="pv-panel pv-panel--people" role="complementary" aria-label="People in presentation">
-          <div class="pv-panel-header">
-            <span>In this presentation ({presence.length})</span>
-            <button class="pv-btn pv-btn--icon pv-panel-close" onClick={() => setShowPeople(false)} aria-label="Close people">✕</button>
-          </div>
-          <ul class="pv-people-list">
-            {presence.map((p) => (
-              <li key={p.userId} class="pv-people-item">
-                <span class="pv-people-dot" style={{ background: p.color }} aria-hidden="true" />
-                <span>{p.displayName}</span>
-                {p.slideIndex !== currentIndex && (
-                  <span class="pv-people-slide"> (slide {p.slideIndex + 1})</span>
-                )}
-              </li>
-            ))}
-            {presence.length === 0 && <li class="pv-people-empty">Only you</li>}
-          </ul>
-        </div>
-      )}
     </div>
   );
 }
-

@@ -7,6 +7,15 @@ interface Team {
   name: string;
 }
 
+type CollabRole = 'editor' | 'viewer';
+
+interface Collaborator {
+  _id: string;
+  username: string;
+  displayName: string;
+  role: CollabRole;
+}
+
 interface Props {
   presentation: PresentationDetail;
   onClose: () => void;
@@ -22,15 +31,20 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
   const [teamId, setTeamId] = useState(presentation.teamId ?? '');
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamsLoadError, setTeamsLoadError] = useState('');
-  const [editorUsername, setEditorUsername] = useState('');
-  const [editors, setEditors] = useState(presentation.editors ?? []);
+  const [addUsername, setAddUsername] = useState('');
+  const [addRole, setAddRole] = useState<CollabRole>('editor');
+  const [collaborators, setCollaborators] = useState<Collaborator[]>(
+    presentation.collaborators ?? presentation.editors?.map((e) => ({ ...e, role: 'editor' as const })) ?? [],
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [addingEditor, setAddingEditor] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    setEditors(presentation.editors ?? []);
-  }, [presentation.editors]);
+    setCollaborators(
+      presentation.collaborators ?? presentation.editors?.map((e) => ({ ...e, role: 'editor' as const })) ?? [],
+    );
+  }, [presentation.collaborators, presentation.editors]);
 
   // Load teams for the team-only selector
   useEffect(() => {
@@ -38,6 +52,13 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
       .then((data) => setTeams(data))
       .catch(() => { setTeamsLoadError('Could not load teams'); });
   }, []);
+
+  const reloadCollaborators = async () => {
+    const fresh = await apiFetch<PresentationDetail>(`/api/presentations/${presentation._id}`);
+    setCollaborators(
+      fresh.collaborators ?? fresh.editors?.map((e) => ({ ...e, role: 'editor' as const })) ?? [],
+    );
+  };
 
   const handleSave = async (e: Event) => {
     e.preventDefault();
@@ -63,33 +84,55 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
     }
   };
 
-  const addEditor = async () => {
-    if (!editorUsername.trim()) return;
+  const addCollaborator = async () => {
+    if (!addUsername.trim()) return;
     setError('');
-    setAddingEditor(true);
+    setAdding(true);
     try {
       await apiFetch(`/api/presentations/${presentation._id}/editors`, {
         method: 'POST',
-        body: JSON.stringify({ username: editorUsername.trim() }),
+        body: JSON.stringify({ username: addUsername.trim() }),
       });
-      setEditorUsername('');
-      // Reload editors list from server
-      const fresh = await apiFetch<PresentationDetail>(`/api/presentations/${presentation._id}`);
-      setEditors(fresh.editors ?? []);
+      setAddUsername('');
+      await reloadCollaborators();
+      // If role should be viewer, change it after adding
+      if (addRole === 'viewer') {
+        const fresh = await apiFetch<PresentationDetail>(`/api/presentations/${presentation._id}`);
+        const added = (fresh.collaborators ?? []).find((c) => c.username.toLowerCase() === addUsername.trim().toLowerCase());
+        if (added) {
+          await apiFetch(`/api/presentations/${presentation._id}/collaborators/${added._id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ role: 'viewer' }),
+          });
+          await reloadCollaborators();
+        }
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add editor');
+      setError(err instanceof Error ? err.message : 'Failed to add collaborator');
     } finally {
-      setAddingEditor(false);
+      setAdding(false);
     }
   };
 
-  const removeEditor = async (userId: string, username: string) => {
-    if (!confirm(`Remove ${username} as editor?`)) return;
+  const changeRole = async (userId: string, newRole: CollabRole) => {
+    try {
+      await apiFetch(`/api/presentations/${presentation._id}/collaborators/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role: newRole }),
+      });
+      setCollaborators((prev) => prev.map((c) => c._id === userId ? { ...c, role: newRole } : c));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change role');
+    }
+  };
+
+  const removeCollaborator = async (userId: string, username: string) => {
+    if (!confirm(`Remove ${username} from collaborators?`)) return;
     try {
       await apiFetch(`/api/presentations/${presentation._id}/editors/${userId}`, { method: 'DELETE' });
-      setEditors((prev) => prev.filter((e) => e._id !== userId));
+      setCollaborators((prev) => prev.filter((c) => c._id !== userId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove editor');
+      setError(err instanceof Error ? err.message : 'Failed to remove collaborator');
     }
   };
 
@@ -132,7 +175,7 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
               setVisibility((e.target as HTMLSelectElement).value as typeof visibility)
             }
           >
-            <option value="private">🔒 Private – only explicit editors</option>
+            <option value="private">🔒 Private – only explicit collaborators</option>
             <option value="team-only">👥 Team only</option>
             <option value="public">🌐 Public – anyone can view</option>
           </select>
@@ -186,22 +229,34 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
 
         {presentation.canEdit && (
           <div class="settings-editors-section">
-            <h3>Collaborators ({editors.length})</h3>
-            {editors.length > 0 ? (
+            <h3>Collaborators ({collaborators.length})</h3>
+            <p class="login-hint" style="margin-top:-6px;margin-bottom:8px">
+              <strong>Editor</strong> — can edit, export, manage collaborators &amp; settings.
+              {' '}<strong>Viewer</strong> — can view only.
+            </p>
+            {collaborators.length > 0 ? (
               <ul class="editors-list">
-                {editors.map((e) => (
-                  <li key={e._id} class="editor-item">
-                    <span class="editor-avatar">{getInitials(e.displayName || e.username)}</span>
+                {collaborators.map((c) => (
+                  <li key={c._id} class="editor-item">
+                    <span class="editor-avatar">{getInitials(c.displayName || c.username)}</span>
                     <div class="editor-info">
-                      <span class="editor-name">{e.displayName}</span>
-                      <span class="editor-username text-muted">@{e.username}</span>
+                      <span class="editor-name">{c.displayName || c.username}</span>
+                      <span class="editor-username text-muted">@{c.username}</span>
                     </div>
-                    <span class="collab-role-badge collab-role-badge--editor">Editor</span>
+                    <select
+                      class="collab-role-select"
+                      value={c.role}
+                      onChange={(e) => void changeRole(c._id, (e.target as HTMLSelectElement).value as CollabRole)}
+                      aria-label={`Role for ${c.username}`}
+                    >
+                      <option value="editor">Editor</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
                     <button
                       class="btn-icon btn-danger-ghost btn-sm"
-                      onClick={() => void removeEditor(e._id, e.username)}
-                      aria-label={`Remove ${e.username} as collaborator`}
-                      title="Remove collaborator"
+                      onClick={() => void removeCollaborator(c._id, c.username)}
+                      aria-label={`Remove ${c.username}`}
+                      title="Remove"
                     >
                       ✕
                     </button>
@@ -215,20 +270,29 @@ export function SettingsModal({ presentation, onClose, onSave }: Props) {
             <div class="add-editor-row">
               <input
                 type="text"
-                placeholder="Add editor by username…"
-                value={editorUsername}
-                onInput={(e) => setEditorUsername((e.target as HTMLInputElement).value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addEditor(); } }}
+                placeholder="Add by username…"
+                value={addUsername}
+                onInput={(e) => setAddUsername((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void addCollaborator(); } }}
                 maxLength={40}
-                aria-label="Username to add as editor"
+                aria-label="Username to add as collaborator"
               />
+              <select
+                class="collab-role-select"
+                value={addRole}
+                onChange={(e) => setAddRole((e.target as HTMLSelectElement).value as CollabRole)}
+                aria-label="Role for new collaborator"
+              >
+                <option value="editor">Editor</option>
+                <option value="viewer">Viewer</option>
+              </select>
               <button
                 class="btn-secondary"
-                onClick={addEditor}
+                onClick={addCollaborator}
                 type="button"
-                disabled={addingEditor}
+                disabled={adding}
               >
-                {addingEditor ? '…' : '+ Add editor'}
+                {adding ? '…' : '+ Add'}
               </button>
             </div>
           </div>
@@ -245,3 +309,4 @@ function getInitials(name: string): string {
     .map((w) => w[0]?.toUpperCase() ?? '')
     .join('');
 }
+

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { nanoid } from 'nanoid';
+import { Types } from 'mongoose';
 import { Presentation } from '../models/presentation.js';
 import { Slide } from '../models/slide.js';
 import { ShareLink } from '../models/sharelink.js';
@@ -9,7 +10,6 @@ import { Version, MAX_AUTO_VERSIONS } from '../models/version.js';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
 import { canView, canEdit } from '../middleware/perm.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
-import type { Types } from 'mongoose';
 
 const router = Router();
 
@@ -98,14 +98,26 @@ router.get('/:id', optionalAuth, async (req: AuthenticatedRequest, res) => {
   const editors = await User.find({ _id: { $in: pres.editorUserIds } })
     .select('_id username displayName')
     .lean();
+  // Fetch viewer display info
+  const viewers = await User.find({ _id: { $in: pres.viewerUserIds ?? [] } })
+    .select('_id username displayName')
+    .lean();
+
+  // Build combined collaborators list with roles
+  const collaborators = [
+    ...editors.map((e) => ({ _id: e._id.toString(), username: e.username, displayName: e.displayName, role: 'editor' as const })),
+    ...viewers.map((v) => ({ _id: v._id.toString(), username: v.username, displayName: v.displayName, role: 'viewer' as const })),
+  ];
 
   res.json({
     _id: pres._id,
     title: pres.title,
     visibility: pres.visibility,
+    teamId: pres.teamId?.toString(),
     ownerUsername: owner?.username ?? 'unknown',
     canEdit: userId ? userCanEdit(pres, userId) : false,
     editors: editors.map((e) => ({ _id: e._id.toString(), username: e.username, displayName: e.displayName })),
+    collaborators,
     thumbnailMode: pres.thumbnailMode ?? 'first-slide',
     slides: slides.map((s) => ({
       id: s._id.toString(),
@@ -225,8 +237,34 @@ router.delete('/:id/editors/:userId', requireAuth, async (req: AuthenticatedRequ
     res.status(403).json({ error: 'Only the owner can remove editors' }); return;
   }
   pres.editorUserIds = pres.editorUserIds.filter((id) => id.toString() !== req.params['userId']);
+  pres.viewerUserIds = (pres.viewerUserIds ?? []).filter((id) => id.toString() !== req.params['userId']);
   await pres.save();
-  res.json({ message: 'Editor removed' });
+  res.json({ message: 'Collaborator removed' });
+});
+
+/** PATCH /api/presentations/:id/collaborators/:userId — change role (editor ↔ viewer) */
+router.patch('/:id/collaborators/:userId', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.body as { role?: string };
+  if (role !== 'editor' && role !== 'viewer') {
+    res.status(400).json({ error: 'role must be "editor" or "viewer"' });
+    return;
+  }
+  const pres = await Presentation.findById(req.params['id']);
+  if (!pres) { res.status(404).json({ error: 'Not found' }); return; }
+  if (pres.ownerUserId.toString() !== req.user!._id.toString()) {
+    res.status(403).json({ error: 'Only the owner can change roles' }); return;
+  }
+  const uid = req.params['userId'];
+  // Remove from both lists, then add to the correct one
+  pres.editorUserIds = pres.editorUserIds.filter((id) => id.toString() !== uid);
+  pres.viewerUserIds = (pres.viewerUserIds ?? []).filter((id) => id.toString() !== uid);
+  if (role === 'editor') {
+    pres.editorUserIds.push(new Types.ObjectId(uid));
+  } else {
+    pres.viewerUserIds.push(new Types.ObjectId(uid));
+  }
+  await pres.save();
+  res.json({ message: 'Role updated' });
 });
 
 /* ─────────────────── Share links ─────────────────── */
