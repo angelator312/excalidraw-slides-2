@@ -43,12 +43,15 @@ router.get('/', requireAuth, async (req: AuthenticatedRequest, res) => {
  * Get team details including members.
  */
 router.get('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const team = await Team.findById(req.params['id']).populate('memberUserIds', 'username displayName').lean();
-  if (!team) { res.status(404).json({ error: 'Team not found' }); return; }
-  if (!isTeamMember(team, req.user!._id.toString())) {
+  // First check membership using raw IDs (before populate)
+  const teamRaw = await Team.findById(req.params['id']).lean();
+  if (!teamRaw) { res.status(404).json({ error: 'Team not found' }); return; }
+  if (!isTeamMember(teamRaw, req.user!._id.toString())) {
     res.status(403).json({ error: 'Not a member of this team' });
     return;
   }
+  // Populate for full member details
+  const team = await Team.findById(req.params['id']).populate('memberUserIds', 'username displayName').lean();
   res.json(team);
 });
 

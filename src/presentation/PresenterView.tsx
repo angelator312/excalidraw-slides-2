@@ -15,6 +15,8 @@ interface Props {
   slideElementRefs: { current: Map<number, HTMLElement> };
   presentationId?: string;
   thumbnails?: Map<string, string>;
+  /** Current user's ID to filter self from cursor overlays */
+  currentUserId?: string;
 }
 
 export function PresenterView({
@@ -26,6 +28,7 @@ export function PresenterView({
   onNotesSave,
   presentationId,
   thumbnails,
+  currentUserId,
 }: Props) {
   const [elapsed, setElapsed] = useState(0);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -74,6 +77,8 @@ export function PresenterView({
       });
     });
     const unsubPointer = rtcClient.on('pointerMove', ({ userId, x, y, visible }) => {
+      // Filter out own cursor
+      if (currentUserId && userId === currentUserId) return;
       setRemotePointers((prev) => {
         const next = new Map(prev);
         if (visible) {
@@ -91,7 +96,7 @@ export function PresenterView({
       });
     });
     return () => { unsubPresence(); unsubPointer(); };
-  }, []);
+  }, [currentUserId]);
 
   // Local laser pointer broadcasting
   useEffect(() => {

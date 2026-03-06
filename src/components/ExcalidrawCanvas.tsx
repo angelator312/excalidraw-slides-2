@@ -28,6 +28,7 @@ import type {
 import type { OrderedExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 import type { SlideRef, ExcalidrawScene } from '../presentation/slideModel';
 import { apiFetch } from '../lib/api';
+import { broadcastPointer, hidePointer } from '../presentation/laserPointer';
 
 export interface ExcalidrawCanvasProps {
   slide: SlideRef | null;
@@ -48,6 +49,8 @@ export interface ExcalidrawCanvasProps {
    * from an external source (e.g. a remote WebSocket diff) without slide.id changing.
    */
   remoteVersion?: number;
+  /** When true, broadcast Excalidraw's built-in laser pointer to all viewers */
+  enableCollabLaser?: boolean;
 }
 
 /** Compute a fast fingerprint of an elements array (id + version pairs). */
@@ -93,9 +96,11 @@ export default function ExcalidrawCanvas({
   className,
   previewScene,
   remoteVersion = 0,
+  enableCollabLaser = false,
 }: ExcalidrawCanvasProps) {
   const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawImperativeAPI | null>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
 
   // Track which slide is currently displayed to skip redundant updateScene calls
   const renderedSlideIdRef = useRef<string | null>(null);
@@ -339,6 +344,7 @@ export default function ExcalidrawCanvas({
 
   return (
     <div
+      ref={wrapperRef}
       class={`excalidraw-viewer ${className ?? ''}`}
       style={{ width: '100%', height: '100%' }}
       aria-label={viewMode ? `Slide: ${slide.title}` : `Edit slide: ${slide.title}`}
@@ -355,6 +361,28 @@ export default function ExcalidrawCanvas({
         autoFocus={!viewMode}
         onChange={viewMode ? undefined : handleChange}
         onLibraryChange={viewMode ? undefined : handleLibraryChange}
+        onPointerUpdate={enableCollabLaser ? (payload) => {
+          const { pointer } = payload as { pointer: { x: number; y: number; tool: string } };
+          if (pointer.tool === 'laser') {
+            const el = wrapperRef.current;
+            if (el) {
+              const rect = el.getBoundingClientRect();
+              const api = apiRef.current;
+              if (api) {
+                const state = api.getAppState();
+                const sx = (pointer.x - state.scrollX) * state.zoom.value + rect.width / 2;
+                const sy = (pointer.y - state.scrollY) * state.zoom.value + rect.height / 2;
+                const nx = sx / rect.width;
+                const ny = sy / rect.height;
+                if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+                  broadcastPointer(nx, ny);
+                }
+              }
+            }
+          } else {
+            hidePointer();
+          }
+        } : undefined}
       />
     </div>
   );

@@ -618,12 +618,27 @@ textarea { resize: vertical; }
   overflow: hidden;
 }
 
+.slide-nav-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--transition);
+  position: relative;
+  z-index: 10;
+}
+.slide-nav-resize-handle:hover,
+.slide-nav-resize-handle:active {
+  background: var(--color-primary-muted);
+}
+
 /* ══════════════════════════════
    Slide navigation (left panel)
 ══════════════════════════════ */
 
 .slide-nav {
-  width: var(--slide-nav-width);
+  /* Width is set via inline style for drag-resize (default 180px, min 120px, max 360px).
+     The previous static `width: var(--slide-nav-width)` is replaced by inline style. */
   flex-shrink: 0;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
@@ -1752,11 +1767,12 @@ textarea { resize: vertical; }
 ══════════════════════════════ */
 
 .pres-card-thumb-img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
-  border-radius: var(--radius) var(--radius) 0 0;
 }
 
 /* ══════════════════════════════
@@ -1780,6 +1796,8 @@ textarea { resize: vertical; }
 ══════════════════════════════ */
 
 .pres-thumb-grid {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: grid;
@@ -2268,3 +2286,23 @@ textarea { resize: vertical; }
   flex-shrink: 0;
 }
 
+
+/* ══════════════════════════════
+   Collaborator role badge
+══════════════════════════════ */
+
+.collab-role-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.collab-role-badge--editor {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+.collab-role-badge--viewer {
+  background: #f3f4f6;
+  color: var(--color-text-muted);
+}

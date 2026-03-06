@@ -14,6 +14,7 @@ interface Props {
   onSlidesChange: (slides: SlideRef[]) => void;
   onRename?: (slideId: string, title: string) => Promise<void>;
   thumbnails?: Map<string, string>;
+  style?: Record<string, string>;
 }
 
 export function SlideNav({
@@ -25,6 +26,7 @@ export function SlideNav({
   onSlidesChange,
   onRename,
   thumbnails,
+  style,
 }: Props) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,7 +76,7 @@ export function SlideNav({
   };
 
   return (
-    <aside class="slide-nav" aria-label="Slide list">
+    <aside class="slide-nav" aria-label="Slide list" style={style}>
       <div class="slide-nav-header">
         <span class="slide-nav-title">Slides</span>
         {canEdit && (

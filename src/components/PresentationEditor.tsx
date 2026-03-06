@@ -26,6 +26,7 @@ export interface PresentationDetail {
   canEdit: boolean;
   editors: Array<{ _id: string; username: string; displayName: string }>;
   thumbnailMode?: 'first-slide' | 'grid';
+  teamId?: string;
   slides: SlideRef[];
 }
 
@@ -57,6 +58,27 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   /** Whether collaborative laser pointer is active in the editor */
   const [collabLaser, setCollabLaser] = useState(false);
 
+  /** Slide nav panel width (resizable via drag handle) */
+  const [slideNavWidth, setSlideNavWidth] = useState(180);
+  const slideNavResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const handleNavResizeMouseDown = (e: MouseEvent) => {
+    e.preventDefault();
+    slideNavResizeRef.current = { startX: e.clientX, startWidth: slideNavWidth };
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!slideNavResizeRef.current) return;
+      const delta = ev.clientX - slideNavResizeRef.current.startX;
+      setSlideNavWidth(Math.max(120, Math.min(360, slideNavResizeRef.current.startWidth + delta)));
+    };
+    const onMouseUp = () => {
+      slideNavResizeRef.current = null;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
   const slideRefs = useRef<Map<number, HTMLElement>>(new Map());
   const thumbPersistTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   /** Debounced API save timer — keyed by slideId so rapid edits don't flood the server */
@@ -64,19 +86,29 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   /** Ref to the slide canvas wrapper for collab laser hit-testing */
   const canvasWrapRef = useRef<HTMLDivElement>(null);
 
-  // Collaborative laser pointer in editor — broadcasts to all viewers
+  // Always broadcast cursor position when hovering over canvas (for named cursors)
+  // The collab laser additionally broadcasts on drag (sends pointer visible=true)
   useEffect(() => {
-    if (!collabLaser || !canvasWrapRef.current) return;
+    if (!canvasWrapRef.current) return;
     const el = canvasWrapRef.current;
-    let active = false;
+    let laserDown = false;
+
     const onMouseMove = (e: MouseEvent) => {
-      if (!active) return;
       const rect = el.getBoundingClientRect();
-      broadcastPointer((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      if (collabLaser && laserDown) {
+        // Collab laser: broadcast visible pointer
+        broadcastPointer(x, y);
+      } else {
+        // Always send cursor position so others see the cursor name tag
+        rtcClient.sendPointerMove(x, y, /* visible */ true);
+      }
     };
-    const onMouseDown = () => { active = true; };
-    const onMouseUp = () => { active = false; hidePointer(); };
-    const onMouseLeave = () => { active = false; hidePointer(); };
+    const onMouseDown = () => { laserDown = true; };
+    const onMouseUp = () => { laserDown = false; if (collabLaser) hidePointer(); };
+    const onMouseLeave = () => { laserDown = false; rtcClient.sendPointerMove(0, 0, false); };
+
     el.addEventListener('mousemove', onMouseMove);
     el.addEventListener('mousedown', onMouseDown);
     el.addEventListener('mouseup', onMouseUp);
@@ -86,7 +118,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
       el.removeEventListener('mousedown', onMouseDown);
       el.removeEventListener('mouseup', onMouseUp);
       el.removeEventListener('mouseleave', onMouseLeave);
-      hidePointer();
+      rtcClient.sendPointerMove(0, 0, false);
     };
   }, [collabLaser]);
 
@@ -109,7 +141,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
     const token = localStorage.getItem('sessionToken') ?? '';
     rtcClient.connect(window.location.origin, presentationId, token);
     const unsubs = [
-      rtcClient.on('slideChange', (idx) => setCurrentIndex(idx)),
+      // Do NOT auto-follow remote slide changes in the editor — each user controls their own view.
+      // (Slide sync is only used in PresenterView for presenter-controlled navigation.)
       rtcClient.on('diff', (payload) => {
         setPres((prev) => {
           if (!prev) return prev;
@@ -127,6 +160,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         setPresence(users);
       }),
       rtcClient.on('pointerMove', ({ userId, x, y, visible }) => {
+        // Filter out own cursor — only show others' cursors
+        if (userId === user?._id) return;
         // Update cursor position for the collaborator overlay in the editor
         setRemoteCursors((prev) => {
           const next = new Map(prev);
@@ -300,6 +335,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         slideElementRefs={slideRefs}
         presentationId={presentationId}
         thumbnails={thumbnails}
+        currentUserId={user?._id}
       />
     );
   }
@@ -393,6 +429,16 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
           onSlidesChange={(slides) => setPres((p) => p ? { ...p, slides } : p)}
           onRename={handleSlideRename}
           thumbnails={thumbnails}
+          style={{ width: `${slideNavWidth}px`, flexShrink: 0 }}
+        />
+        {/* Drag handle to resize the slide nav panel */}
+        <div
+          class="slide-nav-resize-handle"
+          onMouseDown={handleNavResizeMouseDown}
+          aria-label="Resize slide panel"
+          title="Drag to resize"
+          role="separator"
+          aria-orientation="vertical"
         />
 
         <div class="slide-canvas-area">
@@ -413,6 +459,7 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
                 presentationId={presentationId}
                 previewScene={previewScene}
                 remoteVersion={remoteVersion}
+                enableCollabLaser={collabLaser}
               />
               {/* Collaborator cursor overlay (gated by showCursors) */}
               {showCursors && remoteCursors.size > 0 && Array.from(remoteCursors.entries()).map(([uid, cur]) => (

@@ -30,6 +30,8 @@ export interface ExcalidrawViewerProps {
    * source (remote WebSocket diff) without slide.id changing.
    */
   remoteVersion?: number;
+  /** When true, Excalidraw's built-in laser pointer is broadcast to all viewers */
+  enableCollabLaser?: boolean;
 }
 
 /**

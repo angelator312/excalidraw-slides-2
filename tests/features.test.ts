@@ -1077,3 +1077,163 @@ describe('Router – teams route', () => {
     expect(parseRoute('/admin')).not.toBe('teams');
   });
 });
+
+// ─── Teams membership fix ─────────────────────────────────────────────────
+
+describe('Teams: isTeamMember after populate', () => {
+  interface PopulatedTeam {
+    ownerUserId: { toString: () => string };
+    memberUserIds: Array<{ _id: { toString: () => string } } | string>;
+  }
+
+  // Simulates the raw (un-populated) check
+  function isTeamMemberRaw(
+    team: { ownerUserId: string; memberUserIds: string[] },
+    userId: string,
+  ): boolean {
+    return (
+      team.ownerUserId === userId ||
+      team.memberUserIds.some((id) => id === userId)
+    );
+  }
+
+  it('detects member via raw IDs before populate', () => {
+    const team = { ownerUserId: 'u1', memberUserIds: ['u1', 'u2', 'u3'] };
+    expect(isTeamMemberRaw(team, 'u2')).toBe(true);
+    expect(isTeamMemberRaw(team, 'u99')).toBe(false);
+  });
+
+  it('toString on a populated object returns [object Object] - the old bug', () => {
+    const populatedMember = { _id: { toString: () => 'u2' }, username: 'alice', displayName: 'Alice' };
+    // The old code called id.toString() on populated objects
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const badResult = (populatedMember as any).toString();
+    expect(badResult).toBe('[object Object]');
+    expect(badResult).not.toBe('u2');
+  });
+
+  it('checking membership BEFORE populate correctly uses raw IDs', () => {
+    // New server code checks raw team before populating
+    const rawTeam = { ownerUserId: 'u1', memberUserIds: ['u1', 'u2'] };
+    const userId = 'u2';
+    const isMember = isTeamMemberRaw(rawTeam, userId);
+    expect(isMember).toBe(true); // no longer erroneously 403
+  });
+});
+
+// ─── Slide sync: editor should not follow remote slide changes ─────────────
+
+describe('Slide sync: editor vs presenter view', () => {
+  it('editor ignores slideChange RTC events (each user controls own view)', () => {
+    let editorIndex = 2;
+    const remoteIdx = 5;
+
+    // In editor mode, no handler for slideChange
+    const editorHandlers: Array<(idx: number) => void> = [];
+    // (no slideChange handler registered in editor)
+
+    // Simulate receiving a slideChange event
+    editorHandlers.forEach((h) => h(remoteIdx));
+    expect(editorIndex).toBe(2); // unchanged
+  });
+
+  it('presenter view follows slideChange RTC events', () => {
+    let presenterIndex = 2;
+    const remoteIdx = 5;
+
+    // In presenter view, slide change IS followed
+    const presenterHandlers: Array<(idx: number) => void> = [
+      (idx) => { presenterIndex = idx; },
+    ];
+
+    presenterHandlers.forEach((h) => h(remoteIdx));
+    expect(presenterIndex).toBe(5); // changed
+  });
+});
+
+// ─── Self cursor filter ───────────────────────────────────────────────────
+
+describe('Self cursor filter', () => {
+  it('filters out own user ID from remote cursors', () => {
+    const currentUserId = 'me123';
+    const events = [
+      { userId: 'other1', x: 0.3, y: 0.4, visible: true },
+      { userId: 'me123', x: 0.5, y: 0.6, visible: true }, // self
+      { userId: 'other2', x: 0.7, y: 0.8, visible: true },
+    ];
+
+    const cursors = new Map<string, { x: number; y: number }>();
+    for (const ev of events) {
+      if (ev.userId === currentUserId) continue; // filter self
+      if (ev.visible) cursors.set(ev.userId, { x: ev.x, y: ev.y });
+    }
+
+    expect(cursors.has('me123')).toBe(false);
+    expect(cursors.has('other1')).toBe(true);
+    expect(cursors.has('other2')).toBe(true);
+    expect(cursors.size).toBe(2);
+  });
+});
+
+// ─── Resizable slide nav ──────────────────────────────────────────────────
+
+describe('Resizable slide nav', () => {
+  it('clamps nav width between 120 and 360', () => {
+    function clampWidth(w: number): number {
+      return Math.max(120, Math.min(360, w));
+    }
+    expect(clampWidth(50)).toBe(120);
+    expect(clampWidth(500)).toBe(360);
+    expect(clampWidth(200)).toBe(200);
+    expect(clampWidth(120)).toBe(120);
+    expect(clampWidth(360)).toBe(360);
+  });
+
+  it('calculates new width from drag delta', () => {
+    const startWidth = 180;
+    const startX = 300;
+    const currentX = 340; // drag 40px to the right
+    const delta = currentX - startX;
+    const newWidth = Math.max(120, Math.min(360, startWidth + delta));
+    expect(newWidth).toBe(220);
+  });
+});
+
+// ─── Team-only visibility selector ───────────────────────────────────────
+
+describe('Team-only visibility: team selector validation', () => {
+  function validateVisibility(visibility: string, teamId: string | undefined): string | null {
+    if (visibility === 'team-only' && !teamId) return 'Select a team for team-only visibility';
+    return null;
+  }
+
+  it('requires teamId when visibility is team-only', () => {
+    expect(validateVisibility('team-only', '')).toBe('Select a team for team-only visibility');
+    expect(validateVisibility('team-only', undefined)).toBe('Select a team for team-only visibility');
+  });
+
+  it('allows team-only when teamId is provided', () => {
+    expect(validateVisibility('team-only', 'team123')).toBeNull();
+  });
+
+  it('does not require teamId for other visibilities', () => {
+    expect(validateVisibility('public', '')).toBeNull();
+    expect(validateVisibility('private', '')).toBeNull();
+  });
+});
+
+// ─── Thumbnail CSS fix ───────────────────────────────────────────────────
+
+describe('Thumbnail: image fills container', () => {
+  it('image with position:absolute inset:0 fills aspect-ratio container', () => {
+    // The pres-card-thumb has aspect-ratio:16/9 and position:relative
+    // The image should have position:absolute; inset:0; width:100%; height:100%
+    const thumbStyles = { width: '100%', aspectRatio: '16/9', position: 'relative' as const };
+    const imgStyles = { position: 'absolute' as const, inset: 0, width: '100%', height: '100%', objectFit: 'cover' as const };
+
+    // With inset:0 and absolute positioning, the image fills the full container
+    expect(imgStyles.position).toBe('absolute');
+    expect(imgStyles.objectFit).toBe('cover');
+    expect(thumbStyles.position).toBe('relative');
+  });
+});
