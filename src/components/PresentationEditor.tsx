@@ -10,6 +10,7 @@ import { ExportModal } from '../presentation/ExportModal';
 import { ExcalidrawViewer } from './ExcalidrawViewer';
 import { rtcClient } from '../presentation/rtc';
 import type { Presence } from '../presentation/rtc';
+import { broadcastPointer, hidePointer } from '../presentation/laserPointer';
 import { useAuth } from '../hooks/useAuth';
 
 interface Props {
@@ -51,11 +52,43 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   presenceRef.current = presence;
   /** Remote pointer positions (userId → {x, y, displayName, color}) for cursor overlay in editor */
   const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; displayName: string; color: string }>>(new Map());
+  /** Whether to show remote cursors in the editor */
+  const [showCursors, setShowCursors] = useState(true);
+  /** Whether collaborative laser pointer is active in the editor */
+  const [collabLaser, setCollabLaser] = useState(false);
 
   const slideRefs = useRef<Map<number, HTMLElement>>(new Map());
   const thumbPersistTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   /** Debounced API save timer — keyed by slideId so rapid edits don't flood the server */
   const apiSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Ref to the slide canvas wrapper for collab laser hit-testing */
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+
+  // Collaborative laser pointer in editor — broadcasts to all viewers
+  useEffect(() => {
+    if (!collabLaser || !canvasWrapRef.current) return;
+    const el = canvasWrapRef.current;
+    let active = false;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!active) return;
+      const rect = el.getBoundingClientRect();
+      broadcastPointer((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height);
+    };
+    const onMouseDown = () => { active = true; };
+    const onMouseUp = () => { active = false; hidePointer(); };
+    const onMouseLeave = () => { active = false; hidePointer(); };
+    el.addEventListener('mousemove', onMouseMove);
+    el.addEventListener('mousedown', onMouseDown);
+    el.addEventListener('mouseup', onMouseUp);
+    el.addEventListener('mouseleave', onMouseLeave);
+    return () => {
+      el.removeEventListener('mousemove', onMouseMove);
+      el.removeEventListener('mousedown', onMouseDown);
+      el.removeEventListener('mouseup', onMouseUp);
+      el.removeEventListener('mouseleave', onMouseLeave);
+      hidePointer();
+    };
+  }, [collabLaser]);
 
   // Close panel on Escape
   useEffect(() => {
@@ -306,6 +339,28 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
             aria-pressed={openPanel === 'export'}>
             Export
           </button>
+          {/* Collaborative laser pointer — visible to all viewers */}
+          <button
+            class={`btn-toolbar btn-toolbar--icon ${collabLaser ? 'active' : ''}`}
+            onClick={() => setCollabLaser((v) => !v)}
+            title={collabLaser ? 'Stop laser (visible to all)' : 'Collaborative laser (visible to all)'}
+            aria-pressed={collabLaser}
+            aria-label="Collaborative laser pointer"
+          >
+            🔴
+          </button>
+          {/* Toggle remote cursors */}
+          <button
+            class={`btn-toolbar btn-toolbar--icon ${showCursors ? 'active' : ''}`}
+            onClick={() => setShowCursors((v) => !v)}
+            title={showCursors ? 'Hide collaborator cursors' : 'Show collaborator cursors'}
+            aria-pressed={showCursors}
+            aria-label="Toggle collaborator cursors"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M2 2 L2 12 L5 9 L7 13 L9 12 L7 8 L11 8 Z" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round"/>
+            </svg>
+          </button>
           <button
             class={`btn-toolbar btn-toolbar--icon ${openPanel === 'settings' ? 'active' : ''}`}
             onClick={() => togglePanel('settings')}
@@ -343,8 +398,11 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
         <div class="slide-canvas-area">
           {currentSlide ? (
             <div
-              class="slide-excalidraw-wrap"
-              ref={(el) => { if (el) slideRefs.current.set(currentIndex, el); }}
+              class={`slide-excalidraw-wrap ${collabLaser ? 'slide-excalidraw-wrap--laser' : ''}`}
+              ref={(el) => {
+                if (el) slideRefs.current.set(currentIndex, el);
+                (canvasWrapRef as { current: HTMLDivElement | null }).current = el;
+              }}
               style={{ position: 'relative' }}
             >
               <ExcalidrawViewer
@@ -356,8 +414,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
                 previewScene={previewScene}
                 remoteVersion={remoteVersion}
               />
-              {/* Collaborator cursor overlay */}
-              {remoteCursors.size > 0 && Array.from(remoteCursors.entries()).map(([uid, cur]) => (
+              {/* Collaborator cursor overlay (gated by showCursors) */}
+              {showCursors && remoteCursors.size > 0 && Array.from(remoteCursors.entries()).map(([uid, cur]) => (
                 <div
                   key={uid}
                   class="collab-cursor"

@@ -4,6 +4,7 @@ export type Route =
   | { path: 'home' }
   | { path: 'presentation'; id: string }
   | { path: 'admin' }
+  | { path: 'teams' }
   | { path: 'invite-accept'; token: string };
 
 function parseRoute(): Route {
@@ -14,6 +15,8 @@ function parseRoute(): Route {
   if (presMatch && presMatch[1]) return { path: 'presentation', id: presMatch[1] };
 
   if (pathname === '/admin') return { path: 'admin' };
+
+  if (pathname === '/teams') return { path: 'teams' };
 
   // /invite/accept?token=...
   if (pathname === '/invite/accept' || pathname === '/invite') {
@@ -42,6 +45,7 @@ export function useRouter() {
   const navigateToPresentation = (id: string) => navigate(`/presentation/${id}`);
   const navigateHome = () => navigate('/');
   const navigateAdmin = () => navigate('/admin');
+  const navigateTeams = () => navigate('/teams');
 
-  return { route, navigate, navigateToPresentation, navigateHome, navigateAdmin };
+  return { route, navigate, navigateToPresentation, navigateHome, navigateAdmin, navigateTeams };
 }

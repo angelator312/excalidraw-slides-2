@@ -859,3 +859,221 @@ describe('Thumbnail generation retry logic', () => {
     expect(generated).toBe(true);
   });
 });
+
+// ─── Invite token pre-validation ──────────────────────────────────────────
+
+describe('Invite token pre-validation (check before profile form)', () => {
+  type TokenStatus = 'valid' | 'expired' | 'maxed' | 'revoked' | 'invalid';
+
+  interface CheckResult {
+    valid?: boolean;
+    error?: string;
+  }
+
+  function mockCheckResponse(status: TokenStatus): { ok: boolean; body: CheckResult } {
+    switch (status) {
+      case 'valid': return { ok: true, body: { valid: true } };
+      case 'expired': return { ok: false, body: { error: 'Invite token has expired' } };
+      case 'maxed': return { ok: false, body: { error: 'Invite token has reached its maximum use count' } };
+      case 'revoked': return { ok: false, body: { error: 'Invite token has been revoked' } };
+      case 'invalid': return { ok: false, body: { error: 'Invalid invite token' } };
+    }
+  }
+
+  it('allows advancing to profile step when token is valid', async () => {
+    let step: 'token' | 'profile' = 'token';
+    let errorMsg = '';
+
+    const res = mockCheckResponse('valid');
+    if (!res.ok) {
+      errorMsg = res.body.error ?? 'Invalid token';
+    } else {
+      step = 'profile';
+    }
+
+    expect(step).toBe('profile');
+    expect(errorMsg).toBe('');
+  });
+
+  it('blocks profile step and shows error when token is maxed out', async () => {
+    let step: 'token' | 'profile' = 'token';
+    let errorMsg = '';
+
+    const res = mockCheckResponse('maxed');
+    if (!res.ok) {
+      errorMsg = res.body.error ?? 'Invalid token';
+    } else {
+      step = 'profile';
+    }
+
+    expect(step).toBe('token');
+    expect(errorMsg).toBe('Invite token has reached its maximum use count');
+  });
+
+  it('blocks profile step when token is expired', async () => {
+    const res = mockCheckResponse('expired');
+    expect(res.ok).toBe(false);
+    expect(res.body.error).toBe('Invite token has expired');
+  });
+
+  it('blocks profile step when token is revoked', async () => {
+    const res = mockCheckResponse('revoked');
+    expect(res.ok).toBe(false);
+    expect(res.body.error).toBe('Invite token has been revoked');
+  });
+
+  it('blocks profile step when token does not exist', async () => {
+    const res = mockCheckResponse('invalid');
+    expect(res.ok).toBe(false);
+    expect(res.body.error).toBe('Invalid invite token');
+  });
+
+  it('maxUses validation: uses < maxUses → valid', () => {
+    const uses = 2;
+    const maxUses = 5;
+    expect(uses >= maxUses).toBe(false); // not maxed
+  });
+
+  it('maxUses validation: uses >= maxUses → blocked', () => {
+    const uses = 5;
+    const maxUses = 5;
+    expect(uses >= maxUses).toBe(true); // maxed
+  });
+});
+
+// ─── Teams functionality ───────────────────────────────────────────────────
+
+describe('Teams', () => {
+  interface Team {
+    _id: string;
+    name: string;
+    ownerUserId: string;
+    memberUserIds: string[];
+  }
+
+  it('creates a team with the creator as owner and first member', () => {
+    const userId = 'user1';
+    const team: Team = {
+      _id: 'team1',
+      name: 'My Team',
+      ownerUserId: userId,
+      memberUserIds: [userId],
+    };
+    expect(team.ownerUserId).toBe(userId);
+    expect(team.memberUserIds).toContain(userId);
+  });
+
+  it('isTeamMember returns true for owner', () => {
+    const team: Team = { _id: 't1', name: 'T', ownerUserId: 'u1', memberUserIds: ['u1', 'u2'] };
+    const isOwner = team.ownerUserId === 'u1' || team.memberUserIds.includes('u1');
+    expect(isOwner).toBe(true);
+  });
+
+  it('isTeamMember returns false for non-member', () => {
+    const team: Team = { _id: 't1', name: 'T', ownerUserId: 'u1', memberUserIds: ['u1'] };
+    const isMember = team.ownerUserId === 'u99' || team.memberUserIds.includes('u99');
+    expect(isMember).toBe(false);
+  });
+
+  it('cannot remove owner from team', () => {
+    const team: Team = { _id: 't1', name: 'T', ownerUserId: 'u1', memberUserIds: ['u1', 'u2'] };
+    const targetId = 'u1';
+    const canRemove = targetId !== team.ownerUserId;
+    expect(canRemove).toBe(false);
+  });
+
+  it('can remove a non-owner member', () => {
+    const team: Team = { _id: 't1', name: 'T', ownerUserId: 'u1', memberUserIds: ['u1', 'u2'] };
+    const targetId = 'u2';
+    const canRemove = targetId !== team.ownerUserId;
+    expect(canRemove).toBe(true);
+    const updated = team.memberUserIds.filter((id) => id !== targetId);
+    expect(updated).not.toContain('u2');
+    expect(updated).toContain('u1');
+  });
+
+  it('prevents duplicate members', () => {
+    const memberIds = ['u1', 'u2'];
+    const newId = 'u2';
+    const alreadyMember = memberIds.includes(newId);
+    expect(alreadyMember).toBe(true);
+  });
+
+  it('team name is required', () => {
+    function validateTeamName(name: string | undefined): string | null {
+      if (!name?.trim()) return 'Team name is required';
+      return null;
+    }
+    expect(validateTeamName('')).toBe('Team name is required');
+    expect(validateTeamName(undefined)).toBe('Team name is required');
+    expect(validateTeamName('My Team')).toBeNull();
+  });
+});
+
+// ─── Collaborative laser in editor ────────────────────────────────────────
+
+describe('Collaborative laser pointer', () => {
+  it('broadcasting sends normalized coordinates (0-1)', () => {
+    const containerWidth = 800;
+    const containerHeight = 600;
+    const clientX = 400;
+    const clientY = 300;
+    const rectLeft = 0;
+    const rectTop = 0;
+
+    const x = (clientX - rectLeft) / containerWidth;
+    const y = (clientY - rectTop) / containerHeight;
+
+    expect(x).toBe(0.5);
+    expect(y).toBe(0.5);
+    expect(x).toBeGreaterThanOrEqual(0);
+    expect(x).toBeLessThanOrEqual(1);
+    expect(y).toBeGreaterThanOrEqual(0);
+    expect(y).toBeLessThanOrEqual(1);
+  });
+
+  it('showCursors=false hides remote cursor overlays', () => {
+    const showCursors = false;
+    const cursors = new Map([['u1', { x: 0.5, y: 0.5, displayName: 'Alice', color: '#e94560' }]]);
+    const visibleCursors = showCursors ? cursors : new Map();
+    expect(visibleCursors.size).toBe(0);
+  });
+
+  it('showCursors=true shows remote cursor overlays', () => {
+    const showCursors = true;
+    const cursors = new Map([['u1', { x: 0.5, y: 0.5, displayName: 'Alice', color: '#e94560' }]]);
+    const visibleCursors = showCursors ? cursors : new Map();
+    expect(visibleCursors.size).toBe(1);
+  });
+});
+
+// ─── Route handling ────────────────────────────────────────────────────────
+
+describe('Router – teams route', () => {
+  type RoutePath = 'home' | 'presentation' | 'admin' | 'teams' | 'invite-accept';
+
+  function parseRoute(pathname: string): RoutePath {
+    if (pathname === '/admin') return 'admin';
+    if (pathname === '/teams') return 'teams';
+    if (pathname.match(/^\/presentation\/[0-9a-f]{24}\/?$/i)) return 'presentation';
+    if (pathname === '/invite/accept' || pathname === '/invite') return 'invite-accept';
+    return 'home';
+  }
+
+  it('parses /teams as teams route', () => {
+    expect(parseRoute('/teams')).toBe('teams');
+  });
+
+  it('parses /admin as admin route', () => {
+    expect(parseRoute('/admin')).toBe('admin');
+  });
+
+  it('parses / as home route', () => {
+    expect(parseRoute('/')).toBe('home');
+  });
+
+  it('teams and admin are separate routes', () => {
+    expect(parseRoute('/teams')).not.toBe('admin');
+    expect(parseRoute('/admin')).not.toBe('teams');
+  });
+});

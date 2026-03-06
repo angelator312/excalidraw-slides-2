@@ -203,6 +203,37 @@ router.get('/invite', requireOwner, async (_req, res) => {
 });
 
 /**
+ * GET /api/admin/invite/check?token=...
+ * Public — validate whether an invite token is still usable (no auth required).
+ * Returns 200 { valid: true } or an error message.
+ */
+router.get('/invite/check', async (req, res) => {
+  const token = (req.query['token'] as string | undefined)?.trim();
+  if (!token) {
+    res.status(400).json({ error: 'token query param is required' });
+    return;
+  }
+  const inviteToken = await InviteToken.findOne({ token });
+  if (!inviteToken) {
+    res.status(404).json({ error: 'Invalid invite token' });
+    return;
+  }
+  if (inviteToken.revokedAt) {
+    res.status(410).json({ error: 'Invite token has been revoked' });
+    return;
+  }
+  if (inviteToken.expiresAt < new Date()) {
+    res.status(410).json({ error: 'Invite token has expired' });
+    return;
+  }
+  if (inviteToken.uses >= inviteToken.maxUses) {
+    res.status(410).json({ error: 'Invite token has reached its maximum use count' });
+    return;
+  }
+  res.json({ valid: true });
+});
+
+/**
  * PATCH /api/admin/users/:id/role
  * Change a user's role (owner only). Cannot change own role.
  */

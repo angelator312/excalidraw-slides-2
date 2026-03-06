@@ -26,15 +26,35 @@ export function LoginPage({ prefilledToken }: Props) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (prefilledToken) {
-      setMode('signup');
-      setInviteInput(prefilledToken);
-      setSignupToken(prefilledToken);
-      setSignupStep('profile');
-    }
+    if (!prefilledToken) return;
+    setMode('signup');
+    setInviteInput(prefilledToken);
+    setSignupToken(prefilledToken);
+    // Pre-validate the token before showing the profile form
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/admin/invite/check?token=${encodeURIComponent(prefilledToken)}`)
+      .then((r) => r.json() as Promise<{ valid?: boolean; error?: string }>)
+      .then((data) => {
+        if (cancelled) return;
+        if (data.valid) {
+          setSignupStep('profile');
+        } else {
+          setError(data.error ?? 'Invalid or expired invite token');
+          setSignupStep('token');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Could not validate token — check your connection');
+          setSignupStep('token');
+        }
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [prefilledToken]);
 
-  const handleInviteContinue = (e: Event) => {
+  const handleInviteContinue = async (e: Event) => {
     e.preventDefault();
     if (!inviteInput.trim()) { setError('Paste your invite link or token first'); return; }
     let t = inviteInput.trim();
@@ -42,8 +62,24 @@ export function LoginPage({ prefilledToken }: Props) {
       const url = new URL(t);
       t = url.searchParams.get('token') ?? t;
     } catch { /* not a URL */ }
-    setSignupToken(t);
+
     setError('');
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/invite/check?token=${encodeURIComponent(t)}`);
+      const data = await res.json() as { valid?: boolean; error?: string };
+      if (!res.ok) {
+        setError(data.error ?? 'Invalid or expired invite token');
+        return;
+      }
+    } catch {
+      setError('Could not validate token — check your connection');
+      return;
+    } finally {
+      setLoading(false);
+    }
+
+    setSignupToken(t);
     setSignupStep('profile');
   };
 
@@ -176,7 +212,7 @@ export function LoginPage({ prefilledToken }: Props) {
 
         {/* ── Sign up ── */}
         {mode === 'signup' && signupStep === 'token' && (
-          <form onSubmit={handleInviteContinue} class="login-form">
+          <form onSubmit={(e) => void handleInviteContinue(e)} class="login-form">
             <label htmlFor="invite-input">Invite link or token</label>
             <input
               id="invite-input"
@@ -190,7 +226,7 @@ export function LoginPage({ prefilledToken }: Props) {
             />
             <p class="login-hint">Ask your team owner to send you an invite link from the Admin panel.</p>
             {error && <p class="error-msg" role="alert">{error}</p>}
-            <button type="submit" class="btn-primary" disabled={loading}>Continue →</button>
+            <button type="submit" class="btn-primary" disabled={loading}>{loading ? 'Checking…' : 'Continue →'}</button>
           </form>
         )}
 

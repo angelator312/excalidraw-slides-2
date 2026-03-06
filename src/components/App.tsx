@@ -2,12 +2,13 @@ import { PresentationList } from './PresentationList';
 import { LoginPage } from './LoginPage';
 import { PresentationEditor } from './PresentationEditor';
 import { AdminPage } from './AdminPage';
+import { TeamsPage } from './TeamsPage';
 import { useAuth } from '../hooks/useAuth';
 import { useRouter } from '../hooks/useRouter';
 
 export function App() {
   const { user, loading, logout } = useAuth();
-  const { route, navigateToPresentation, navigateHome, navigateAdmin } = useRouter();
+  const { route, navigateToPresentation, navigateHome, navigateAdmin, navigateTeams } = useRouter();
 
   if (loading) {
     return (
@@ -41,6 +42,11 @@ export function App() {
     return <AdminPage onBack={navigateHome} />;
   }
 
+  // Route: /teams
+  if (route.path === 'teams') {
+    return <TeamsPage onBack={navigateHome} currentUserId={user._id.toString()} />;
+  }
+
   // Route: / (home)
   return (
     <div class="app-shell">
@@ -58,6 +64,9 @@ export function App() {
         <nav class="app-nav" aria-label="Main navigation">
           <button class="nav-btn active" aria-current="page">
             Presentations
+          </button>
+          <button class="nav-btn" onClick={navigateTeams}>
+            Teams
           </button>
           {user.role === 'owner' && (
             <button class="nav-btn" onClick={navigateAdmin}>
