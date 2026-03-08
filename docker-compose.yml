@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: excalidraw-slides
+    ports:
+      - "27017:27017"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      MONGO_URI: mongodb://mongodb:27017/excalidraw-slides
+      JWT_SECRET: "${JWT_SECRET:-change-me-in-production}"
+      CLIENT_ORIGIN: "${CLIENT_ORIGIN:-http://localhost:3000}"
+    depends_on:
+      - mongodb
+      - redis
+
+volumes:
+  mongo_data:
