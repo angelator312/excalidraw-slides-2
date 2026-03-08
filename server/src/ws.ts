@@ -6,7 +6,7 @@ import { Presentation } from './models/presentation.js';
 import { Slide } from './models/slide.js';
 import { ShareLink } from './models/sharelink.js';
 import { Version, MAX_AUTO_VERSIONS } from './models/version.js';
-import { canView, canEdit } from './middleware/perm.js';
+import { canView, canEdit, canViewWithTeam, canEditWithTeam } from './middleware/perm.js';
 import { JWT_SECRET } from './config.js';
 
 interface PresenceInfo {
@@ -65,7 +65,7 @@ export function setupWebSocket(httpServer: HTTPServer): IOServer {
         }
       }
 
-      if (!canView(pres, userId ?? undefined, shareRole)) {
+      if (!await canViewWithTeam(pres, userId ?? undefined, shareRole)) {
         socket.emit('error', 'Access denied');
         return;
       }
@@ -114,7 +114,7 @@ export function setupWebSocket(httpServer: HTTPServer): IOServer {
       const presId = data.presentationId;
       const pres = await Presentation.findById(presId).lean();
       if (!pres) return;
-      if (!canEdit(pres, userId ?? undefined)) return;
+      if (!await canEditWithTeam(pres, userId ?? undefined)) return;
 
       const slide = await Slide.findOne({ _id: data.slideId, presentationId: presId });
       if (!slide) return;
@@ -140,7 +140,7 @@ export function setupWebSocket(httpServer: HTTPServer): IOServer {
       slide.sceneJSON = data.sceneJSON;
       await slide.save();
 
-      // Broadcast to everyone else in the room
+      // Broadcast to everyone else in the room (not the sender)
       socket.to(presId).emit('diff', { slideId: data.slideId, sceneJSON: data.sceneJSON, userId });
     });
 
@@ -158,8 +158,8 @@ export function setupWebSocket(httpServer: HTTPServer): IOServer {
 
     /* ── Laser pointer move ── */
     socket.on('pointerMove', (data: { presentationId: string; x: number; y: number; visible: boolean }) => {
-      // Broadcast to ALL in room (including sender for self-preview)
-      io.to(data.presentationId).emit('pointerMove', {
+      // Broadcast to everyone else in the room (exclude sender to avoid self-pointer)
+      socket.to(data.presentationId).emit('pointerMove', {
         userId: userId ?? socket.id,
         x: data.x,
         y: data.y,

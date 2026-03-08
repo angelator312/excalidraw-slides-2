@@ -26,6 +26,7 @@ export async function canViewWithTeam(
 
 /**
  * Async edit check with team fallback.
+ * Team owner and members with 'editor' role can edit team presentations.
  */
 export async function canEditWithTeam(
   pres: PresLike,
@@ -34,10 +35,11 @@ export async function canEditWithTeam(
 ): Promise<boolean> {
   if (canEdit(pres, userId, shareRole)) return true;
   if (!userId || pres.visibility !== 'team-only' || !pres.teamId) return false;
-  const team = await Team.findById(pres.teamId).select('ownerUserId memberUserIds').lean();
+  const team = await Team.findById(pres.teamId).select('ownerUserId memberUserIds memberRoles').lean();
   if (!team) return false;
-  return (
-    team.ownerUserId.toString() === userId ||
-    team.memberUserIds.some((id) => id.toString() === userId)
-  );
+  // Team owner always has edit access
+  if (team.ownerUserId.toString() === userId) return true;
+  // Team members with 'editor' role have edit access
+  const memberRole = (team.memberRoles ?? []).find((r) => r.userId.toString() === userId);
+  return memberRole?.role === 'editor';
 }

@@ -31,7 +31,7 @@ export interface PresentationDetail {
   slides: SlideRef[];
 }
 
-type Panel = 'history' | 'share' | 'settings' | 'export' | null;
+type Panel = 'history' | 'share' | 'settings' | 'export' | 'shortcuts' | null;
 
 export function PresentationEditor({ presentationId, onBack }: Props) {
   const { user } = useAuth();
@@ -56,8 +56,8 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
   const [remoteCursors, setRemoteCursors] = useState<Map<string, { x: number; y: number; displayName: string; color: string }>>(new Map());
   /** Whether to show remote cursors in the editor */
   const [showCursors, setShowCursors] = useState(true);
-  /** Whether collaborative laser pointer is active in the editor */
-  const [collabLaser, setCollabLaser] = useState(false);
+  /** Collaborative laser pointer is always ON — no toggle needed */
+  const collabLaser = true;
 
   /** Slide nav panel width (resizable via drag handle) */
   const [slideNavWidth, setSlideNavWidth] = useState(180);
@@ -345,16 +345,6 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
             aria-pressed={openPanel === 'export'}>
             Export
           </button>
-          {/* Collaborative laser pointer — visible to all viewers */}
-          <button
-            class={`btn-toolbar btn-toolbar--icon ${collabLaser ? 'active' : ''}`}
-            onClick={() => setCollabLaser((v) => !v)}
-            title={collabLaser ? 'Stop laser (visible to all)' : 'Collaborative laser (visible to all)'}
-            aria-pressed={collabLaser}
-            aria-label="Collaborative laser pointer"
-          >
-            🔴
-          </button>
           {/* Toggle remote cursors */}
           <button
             class={`btn-toolbar btn-toolbar--icon ${showCursors ? 'active' : ''}`}
@@ -365,6 +355,26 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M2 2 L2 12 L5 9 L7 13 L9 12 L7 8 L11 8 Z" fill="currentColor" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          {/* Keyboard shortcuts */}
+          <button
+            class={`btn-toolbar btn-toolbar--icon ${openPanel === 'shortcuts' ? 'active' : ''}`}
+            onClick={() => togglePanel('shortcuts')}
+            title="Keyboard shortcuts"
+            aria-pressed={openPanel === 'shortcuts'}
+            aria-label="Keyboard shortcuts"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="1" y="3.5" width="14" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+              <rect x="2.5" y="5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="5.5" y="5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="8.5" y="5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="11" y="5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="2.5" y="7.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="5.5" y="7.5" width="5" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="11" y="7.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+              <rect x="4" y="10" width="8" height="1.5" rx="0.4" fill="currentColor"/>
             </svg>
           </button>
           <button
@@ -506,6 +516,64 @@ export function PresentationEditor({ presentationId, onBack }: Props) {
           slideElementRefs={slideRefs}
           onClose={() => setOpenPanel(null)}
         />
+      )}
+      {openPanel === 'shortcuts' && (
+        <div
+          class="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          onClick={(e) => { if (e.target === e.currentTarget) setOpenPanel(null); }}
+        >
+          <div class="modal-box pv-shortcuts-box">
+            <div class="modal-header">
+              <h2>Keyboard Shortcuts</h2>
+              <button class="modal-close" onClick={() => setOpenPanel(null)} aria-label="Close">✕</button>
+            </div>
+            <div class="pv-shortcuts-body">
+              <h3 class="pv-shortcuts-section">Editor</h3>
+              <table class="pv-shortcuts-table">
+                <thead>
+                  <tr><th>Key</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Redo</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Copy</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Paste</td></tr>
+                  <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td><td>Delete selected</td></tr>
+                  <tr><td><kbd>1</kbd></td><td>Select tool</td></tr>
+                  <tr><td><kbd>2</kbd></td><td>Rectangle tool</td></tr>
+                  <tr><td><kbd>3</kbd></td><td>Diamond tool</td></tr>
+                  <tr><td><kbd>4</kbd></td><td>Ellipse tool</td></tr>
+                  <tr><td><kbd>5</kbd></td><td>Arrow tool</td></tr>
+                  <tr><td><kbd>6</kbd></td><td>Line tool</td></tr>
+                  <tr><td><kbd>7</kbd></td><td>Freedraw tool</td></tr>
+                  <tr><td><kbd>8</kbd></td><td>Text tool</td></tr>
+                  <tr><td><kbd>9</kbd></td><td>Image tool</td></tr>
+                  <tr><td><kbd>0</kbd></td><td>Eraser tool</td></tr>
+                  <tr><td><kbd>L</kbd></td><td>Laser pointer tool</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>+</kbd></td><td>Zoom in</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>Zoom out</td></tr>
+                  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></td><td>Fit to screen</td></tr>
+                </tbody>
+              </table>
+              <h3 class="pv-shortcuts-section" style="margin-top:12px">Presentation mode</h3>
+              <table class="pv-shortcuts-table">
+                <thead>
+                  <tr><th>Key</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><kbd>→</kbd> / <kbd>↓</kbd> / <kbd>Page↓</kbd></td><td>Next slide</td></tr>
+                  <tr><td><kbd>←</kbd> / <kbd>↑</kbd> / <kbd>Page↑</kbd></td><td>Previous slide</td></tr>
+                  <tr><td><kbd>F</kbd></td><td>Toggle fullscreen</td></tr>
+                  <tr><td><kbd>Esc</kbd></td><td>Exit presentation</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

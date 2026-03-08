@@ -2278,3 +2278,65 @@ textarea { resize: vertical; }
   outline-offset: 1px;
   border-color: var(--color-primary);
 }
+
+/* ── Keyboard shortcuts modal ── */
+.pv-shortcuts-box {
+  max-width: 560px;
+  width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.pv-shortcuts-body {
+  padding: 4px 0 8px;
+}
+
+.pv-shortcuts-section {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-muted, #6b7280);
+  margin: 12px 0 6px;
+}
+
+.pv-shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.pv-shortcuts-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-muted, #6b7280);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+}
+
+.pv-shortcuts-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border-light, #f3f4f6);
+  vertical-align: middle;
+}
+
+.pv-shortcuts-table tr:last-child td {
+  border-bottom: none;
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: inherit;
+  font-size: 0.8em;
+  line-height: 1.6;
+  background: var(--color-bg-secondary, #f9fafb);
+  border: 1px solid var(--color-border, #d1d5db);
+  border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  white-space: nowrap;
+  color: var(--color-text, #111827);
+}

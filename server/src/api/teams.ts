@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import { Types } from 'mongoose';
 import { Team } from '../models/team.js';
+import type { TeamMemberRole } from '../models/team.js';
 import { User } from '../models/user.js';
 import { requireAuth } from '../middleware/auth.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
@@ -57,14 +59,15 @@ router.get('/:id', requireAuth, async (req: AuthenticatedRequest, res) => {
 
 /**
  * POST /api/teams/:id/members
- * Owner adds a member by username.
+ * Owner adds a member by username, optionally with a role (default: 'viewer').
  */
 router.post('/:id/members', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const { username } = req.body as { username?: string };
+  const { username, role } = req.body as { username?: string; role?: TeamMemberRole };
   if (!username?.trim()) {
     res.status(400).json({ error: 'username is required' });
     return;
   }
+  const memberRole: TeamMemberRole = role === 'editor' ? 'editor' : 'viewer';
 
   const team = await Team.findById(req.params['id']);
   if (!team) { res.status(404).json({ error: 'Team not found' }); return; }
@@ -86,9 +89,48 @@ router.post('/:id/members', requireAuth, async (req: AuthenticatedRequest, res) 
   }
 
   team.memberUserIds.push(targetUser._id);
+  team.memberRoles.push({ userId: targetUser._id, role: memberRole });
   await team.save();
 
-  res.json({ message: 'Member added', userId: targetUser._id, username: targetUser.username });
+  res.json({ message: 'Member added', userId: targetUser._id, username: targetUser.username, role: memberRole });
+});
+
+/**
+ * PATCH /api/teams/:id/members/:userId/role
+ * Owner changes a member's role.
+ */
+router.patch('/:id/members/:userId/role', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { role } = req.body as { role?: TeamMemberRole };
+  if (role !== 'editor' && role !== 'viewer') {
+    res.status(400).json({ error: 'role must be "editor" or "viewer"' });
+    return;
+  }
+
+  const team = await Team.findById(req.params['id']);
+  if (!team) { res.status(404).json({ error: 'Team not found' }); return; }
+  if (team.ownerUserId.toString() !== req.user!._id.toString()) {
+    res.status(403).json({ error: 'Only the team owner can change roles' });
+    return;
+  }
+
+  const targetId = req.params['userId'];
+  if (targetId === team.ownerUserId.toString()) {
+    res.status(400).json({ error: 'Cannot change the role of the team owner' });
+    return;
+  }
+
+  const isMember = team.memberUserIds.some((id) => id.toString() === targetId);
+  if (!isMember) { res.status(404).json({ error: 'User is not a member of this team' }); return; }
+
+  const existingRole = team.memberRoles.find((r) => r.userId.toString() === targetId);
+  if (existingRole) {
+    existingRole.role = role;
+  } else {
+    // Legacy member without a role entry — create one
+    team.memberRoles.push({ userId: new Types.ObjectId(targetId), role });
+  }
+  await team.save();
+  res.json({ message: 'Role updated', userId: targetId, role });
 });
 
 /**
@@ -110,6 +152,7 @@ router.delete('/:id/members/:userId', requireAuth, async (req: AuthenticatedRequ
   }
 
   team.memberUserIds = team.memberUserIds.filter((id) => id.toString() !== targetId);
+  team.memberRoles = team.memberRoles.filter((r) => r.userId.toString() !== targetId);
   await team.save();
   res.json({ message: 'Member removed' });
 });

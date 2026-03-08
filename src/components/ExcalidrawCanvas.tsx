@@ -115,6 +115,9 @@ export default function ExcalidrawCanvas({
   // Track whether we're showing a preview (to restore on mouse-leave)
   const inPreviewRef = useRef(false);
 
+  // Flag: suppress onChange during programmatic remote scene updates
+  const isApplyingRemoteRef = useRef(false);
+
   useHandleLibrary({
     excalidrawAPI,
     getInitialLibraryItems: async (): Promise<LibraryItems> => {
@@ -122,6 +125,35 @@ export default function ExcalidrawCanvas({
       return fetchPresentationLibraries(presentationId);
     },
   });
+
+  // BroadcastChannel: listen for library updates from other tabs and reload
+  useEffect(() => {
+    if (!presentationId || !excalidrawAPI) return;
+    const channel = new BroadcastChannel(`excalidraw-lib-${presentationId}`);
+    channel.onmessage = async () => {
+      const items = await fetchPresentationLibraries(presentationId);
+      // Update the library in Excalidraw with the fresh items from server
+      const api = apiRef.current;
+      if (api && typeof (api as { updateLibrary?: unknown }).updateLibrary === 'function') {
+        (api as { updateLibrary: (opts: { libraryItems: LibraryItems; merge: boolean }) => void })
+          .updateLibrary({ libraryItems: items, merge: false });
+      }
+    };
+    return () => channel.close();
+  }, [excalidrawAPI, presentationId]);
+
+  // ResizeObserver: re-fit content when the canvas container is resized
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!excalidrawAPI || !el) return;
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false });
+      });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [excalidrawAPI]);
 
   const handleExcalidrawAPI = (api: ExcalidrawImperativeAPI) => {
     apiRef.current = api;
@@ -138,6 +170,10 @@ export default function ExcalidrawCanvas({
           method: 'PUT',
           body: JSON.stringify({ libraryData }),
         });
+        // Notify other tabs to reload their library
+        const channel = new BroadcastChannel(`excalidraw-lib-${presentationId}`);
+        channel.postMessage({ type: 'library-updated' });
+        channel.close();
       } catch {
         // non-critical — library is still in Excalidraw's local state
       }
@@ -183,6 +219,7 @@ export default function ExcalidrawCanvas({
       if (incomingFp !== lastElementsFpRef.current) {
         // Remote change: update elements without triggering local onChange
         lastElementsFpRef.current = incomingFp;
+        isApplyingRemoteRef.current = true;
         excalidrawAPI.updateScene({
           elements: incomingElements,
           appState: { viewModeEnabled: viewMode, zenModeEnabled: false },
@@ -202,6 +239,7 @@ export default function ExcalidrawCanvas({
     renderedSlideIdRef.current = slide.id;
     // Seed the elements fingerprint to avoid a spurious onChange on first load
     lastElementsFpRef.current = incomingFp;
+    isApplyingRemoteRef.current = true;
 
     excalidrawAPI.updateScene({
       elements: incomingElements,
@@ -301,6 +339,15 @@ export default function ExcalidrawCanvas({
     files: BinaryFiles,
   ) => {
     if (viewMode || !onChange) return;
+
+    // If we're in the middle of applying a remote scene update, absorb onChange
+    // to prevent re-broadcasting remote changes back to the server.
+    if (isApplyingRemoteRef.current) {
+      isApplyingRemoteRef.current = false;
+      // Update the fingerprint to the actual post-update state from Excalidraw
+      lastElementsFpRef.current = fingerprintElements(elements);
+      return;
+    }
 
     // Only fire onChange when elements actually changed
     const fp = fingerprintElements(elements);

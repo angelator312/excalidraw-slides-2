@@ -36,6 +36,8 @@ export function PresenterView({
   const [showNotes, setShowNotes] = useState(false);
   const [barVisible, setBarVisible] = useState(true);
   const [presence, setPresence] = useState<Presence[]>([]);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   /** userId → {x, y, displayName, color} for named laser/pointer overlays */
   const [remotePointers, setRemotePointers] = useState<
     Map<string, { x: number; y: number; displayName: string; color: string }>
@@ -59,6 +61,13 @@ export function PresenterView({
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [timerRunning]);
+
+  // Track fullscreen state
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
 
   // RTC: presence + remote laser pointers
   useEffect(() => {
@@ -135,6 +144,13 @@ export function PresenterView({
         onSlideChange(Math.max(currentIndexRef.current - 1, 0));
       } else if (e.key === 'Escape') {
         onExit();
+      } else if (e.key === 'f' || e.key === 'F') {
+        // F key toggles fullscreen (only when not in an input)
+        if (document.fullscreenElement) {
+          void document.exitFullscreen();
+        } else {
+          void document.documentElement.requestFullscreen();
+        }
       }
     };
     window.addEventListener('keydown', handler);
@@ -159,9 +175,12 @@ export function PresenterView({
 
   const currentSlide = slides[currentIndex];
 
-  const enterFullscreen = () => {
-    const el = document.documentElement;
-    if (el.requestFullscreen) void el.requestFullscreen();
+  const toggleFullscreen = () => {
+    if (isFullscreen) {
+      void document.exitFullscreen();
+    } else {
+      void document.documentElement.requestFullscreen();
+    }
   };
 
   return (
@@ -282,10 +301,30 @@ export function PresenterView({
 
         <div class="pv-bar-sep" aria-hidden="true" />
 
-        {/* Fullscreen */}
-        <button class="pv-bar-btn" onClick={enterFullscreen} title="Fullscreen" aria-label="Enter fullscreen">
+        {/* Fullscreen toggle */}
+        <button class="pv-bar-btn" onClick={toggleFullscreen} title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'} aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}>
+          {isFullscreen ? (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M4 1v3H1M10 1h3v3M13 10v3h-3M4 13H1v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 4L1 1M10 4l3-3M10 10l3 3M4 10l-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M1 4V1h3M10 1h3v3M13 10v3h-3M4 13H1v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          )}
+        </button>
+
+        {/* Keyboard shortcuts */}
+        <button class="pv-bar-btn" onClick={() => setShowShortcuts((v) => !v)} title="Keyboard shortcuts" aria-label="Show keyboard shortcuts" aria-pressed={showShortcuts}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-            <path d="M1 4V1h3M10 1h3v3M13 10v3h-3M4 13H1v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+            <rect x="2.5" y="4.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="5.5" y="4.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="8.5" y="4.5" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="2.5" y="7" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="5.5" y="7" width="2" height="1.5" rx="0.4" fill="currentColor"/>
+            <rect x="8.5" y="7" width="2" height="1.5" rx="0.4" fill="currentColor"/>
           </svg>
         </button>
 
@@ -312,6 +351,37 @@ export function PresenterView({
             placeholder="Add speaker notes here…"
             aria-label="Speaker notes"
           />
+        </div>
+      )}
+
+      {/* ── Keyboard shortcuts modal ── */}
+      {showShortcuts && (
+        <div
+          class="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowShortcuts(false); }}
+        >
+          <div class="modal-box pv-shortcuts-box">
+            <div class="modal-header">
+              <h2>Keyboard Shortcuts</h2>
+              <button class="modal-close" onClick={() => setShowShortcuts(false)} aria-label="Close">✕</button>
+            </div>
+            <div class="pv-shortcuts-body">
+              <table class="pv-shortcuts-table">
+                <thead>
+                  <tr><th>Key</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><kbd>→</kbd> / <kbd>↓</kbd> / <kbd>Page↓</kbd></td><td>Next slide</td></tr>
+                  <tr><td><kbd>←</kbd> / <kbd>↑</kbd> / <kbd>Page↑</kbd></td><td>Previous slide</td></tr>
+                  <tr><td><kbd>Esc</kbd></td><td>Exit presentation</td></tr>
+                  <tr><td><kbd>F</kbd> / Fullscreen button</td><td>Toggle fullscreen</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>

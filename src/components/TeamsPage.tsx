@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback } from 'preact/hooks';
 import { apiFetch } from '../lib/api';
 
+type TeamMemberRole = 'editor' | 'viewer';
+
 interface Team {
   _id: string;
   name: string;
   ownerUserId: string;
   memberUserIds: string[];
+  memberRoles?: Array<{ userId: string; role: TeamMemberRole }>;
   createdAt: string;
 }
 
@@ -15,7 +18,7 @@ interface TeamMember {
   displayName: string;
 }
 
-interface TeamDetail extends Team {
+interface TeamDetail extends Omit<Team, 'memberUserIds'> {
   memberUserIds: TeamMember[];
 }
 
@@ -33,6 +36,7 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
   const [createError, setCreateError] = useState('');
   const [selectedTeam, setSelectedTeam] = useState<TeamDetail | null>(null);
   const [addMemberUsername, setAddMemberUsername] = useState('');
+  const [addMemberRole, setAddMemberRole] = useState<TeamMemberRole>('viewer');
   const [addingMember, setAddingMember] = useState(false);
   const [memberError, setMemberError] = useState('');
 
@@ -88,7 +92,7 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
     try {
       await apiFetch(`/api/teams/${selectedTeam._id}/members`, {
         method: 'POST',
-        body: JSON.stringify({ username: addMemberUsername.trim() }),
+        body: JSON.stringify({ username: addMemberUsername.trim(), role: addMemberRole }),
       });
       setAddMemberUsername('');
       // Reload team detail
@@ -98,6 +102,20 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
       setMemberError(err instanceof Error ? err.message : 'Failed to add member');
     } finally {
       setAddingMember(false);
+    }
+  };
+
+  const changeMemberRole = async (userId: string, newRole: TeamMemberRole) => {
+    if (!selectedTeam) return;
+    try {
+      await apiFetch(`/api/teams/${selectedTeam._id}/members/${userId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role: newRole }),
+      });
+      const fresh = await apiFetch<TeamDetail>(`/api/teams/${selectedTeam._id}`);
+      setSelectedTeam(fresh);
+    } catch (err) {
+      setMemberError(err instanceof Error ? err.message : 'Failed to change role');
     }
   };
 
@@ -111,6 +129,13 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
     } catch (err) {
       setMemberError(err instanceof Error ? err.message : 'Failed to remove member');
     }
+  };
+
+  /** Get role of a team member from memberRoles array */
+  const getMemberRole = (team: TeamDetail, userId: string): TeamMemberRole => {
+    if (userId === team.ownerUserId) return 'editor'; // owner implicitly is editor
+    const roleEntry = (team.memberRoles ?? []).find((r) => r.userId === userId);
+    return roleEntry?.role ?? 'viewer';
   };
 
   return (
@@ -190,6 +215,23 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
                     <span class="editor-name">{m.displayName}</span>
                     <span class="editor-username text-muted">@{m.username}</span>
                   </div>
+                  {m._id === selectedTeam.ownerUserId ? (
+                    <span class="teams-owner-tag">Owner</span>
+                  ) : selectedTeam.ownerUserId === currentUserId ? (
+                    <select
+                      class="collab-role-select"
+                      value={getMemberRole(selectedTeam, m._id)}
+                      onChange={(e) => void changeMemberRole(m._id, (e.target as HTMLSelectElement).value as TeamMemberRole)}
+                      aria-label={`Role for ${m.username}`}
+                    >
+                      <option value="editor">Editor</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  ) : (
+                    <span class={`collab-role-badge collab-role-badge--${getMemberRole(selectedTeam, m._id)}`}>
+                      {getMemberRole(selectedTeam, m._id) === 'editor' ? 'Editor' : 'Viewer'}
+                    </span>
+                  )}
                   {selectedTeam.ownerUserId === currentUserId && m._id !== currentUserId && (
                     <button
                       class="btn-icon btn-danger-ghost btn-sm"
@@ -199,9 +241,6 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
                     >
                       ✕
                     </button>
-                  )}
-                  {m._id === selectedTeam.ownerUserId && (
-                    <span class="teams-owner-tag">Owner</span>
                   )}
                 </li>
               ))}
@@ -218,6 +257,15 @@ export function TeamsPage({ onBack, currentUserId }: Props) {
                   maxLength={40}
                   aria-label="Add member by username"
                 />
+                <select
+                  class="collab-role-select"
+                  value={addMemberRole}
+                  onChange={(e) => setAddMemberRole((e.target as HTMLSelectElement).value as TeamMemberRole)}
+                  aria-label="Role for new member"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                </select>
                 <button
                   class="btn-secondary"
                   onClick={() => void addMember()}
