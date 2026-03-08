@@ -9,6 +9,9 @@ import { Version, MAX_AUTO_VERSIONS } from './models/version.js';
 import { canView, canEdit, canViewWithTeam, canEditWithTeam } from './middleware/perm.js';
 import { JWT_SECRET } from './config.js';
 
+/** Minimum gap (ms) between auto-version saves for the same slide. */
+const AUTO_VERSION_DEBOUNCE_MS = 30_000;
+
 interface PresenceInfo {
   userId: string;
   displayName: string;
@@ -119,22 +122,33 @@ export function setupWebSocket(httpServer: HTTPServer): IOServer {
       const slide = await Slide.findOne({ _id: data.slideId, presentationId: presId });
       if (!slide) return;
 
-      // Save auto-version
-      await Version.create({
-        slideId: slide._id,
-        presentationId: presId,
-        sceneJSON: slide.sceneJSON,
-        type: 'auto',
-        createdBy: userId ?? undefined,
-      });
-      // Prune
-      const old = await Version.find({ slideId: slide._id, type: 'auto' })
+      // Only save an auto-version if the last one for this slide is older than 30s.
+      // This prevents a flood of identical/near-identical snapshots on every keystroke.
+      const lastAuto = await Version.findOne({ slideId: slide._id, type: 'auto' })
         .sort({ createdAt: -1 })
-        .skip(MAX_AUTO_VERSIONS)
-        .select('_id')
+        .select('createdAt')
         .lean();
-      if (old.length > 0) {
-        await Version.deleteMany({ _id: { $in: old.map((v) => v._id) } });
+      const shouldSaveVersion =
+        !lastAuto ||
+        Date.now() - lastAuto.createdAt.getTime() > AUTO_VERSION_DEBOUNCE_MS;
+
+      if (shouldSaveVersion) {
+        await Version.create({
+          slideId: slide._id,
+          presentationId: presId,
+          sceneJSON: slide.sceneJSON,
+          type: 'auto',
+          createdBy: userId ?? undefined,
+        });
+        // Prune old auto-versions beyond the cap
+        const old = await Version.find({ slideId: slide._id, type: 'auto' })
+          .sort({ createdAt: -1 })
+          .skip(MAX_AUTO_VERSIONS)
+          .select('_id')
+          .lean();
+        if (old.length > 0) {
+          await Version.deleteMany({ _id: { $in: old.map((v) => v._id) } });
+        }
       }
 
       slide.sceneJSON = data.sceneJSON;

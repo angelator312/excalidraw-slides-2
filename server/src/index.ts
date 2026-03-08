@@ -43,6 +43,7 @@ app.use('/api/', rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
 }));
 
 /* ── Stricter rate limit for invite generation ── */
