@@ -9,6 +9,9 @@
  *  - onChange only fires when the *elements* change (not just appState), so
  *    auto-versioning is only triggered by real content edits.
  *  - CaptureUpdateAction.NEVER on slide transitions keeps undo history clean.
+ *  - restoreElements (with repairBindings:true) is called before every updateScene
+ *    so that arrow↔shape bindings and other normalized fields are fully resolved,
+ *    matching what Excalidraw's initialData path does via restore().
  */
 import { useState, useEffect, useRef, useCallback } from 'preact/hooks';
 import {
@@ -17,6 +20,7 @@ import {
   mergeLibraryItems,
   CaptureUpdateAction,
   exportToBlob,
+  restoreElements,
 } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
 import type {
@@ -56,6 +60,21 @@ export interface ExcalidrawCanvasProps {
 /** Compute a fast fingerprint of an elements array (id + version pairs). */
 function fingerprintElements(elements: readonly { id: string; version?: number }[]): string {
   return elements.map((el) => `${el.id}:${el.version ?? 0}`).join('|');
+}
+
+/**
+ * Normalise raw scene elements (from server / clipboard) and repair arrow↔shape
+ * bindings before passing them to `updateScene`.  This mirrors what Excalidraw
+ * does internally via `restore()` when using `initialData`.
+ */
+function normaliseElements(
+  elements: { id: string; [key: string]: unknown }[],
+): ReturnType<typeof restoreElements> {
+  return restoreElements(
+    elements as unknown as Parameters<typeof restoreElements>[0],
+    null,
+    { repairBindings: true },
+  );
 }
 
 async function fetchPresentationLibraries(presentationId: string): Promise<LibraryItems> {
@@ -189,7 +208,7 @@ export default function ExcalidrawCanvas({
     if (previewScene !== undefined && previewScene !== null) {
       inPreviewRef.current = true;
       excalidrawAPI.updateScene({
-        elements: previewScene.elements ?? [],
+        elements: normaliseElements(previewScene.elements ?? []),
         appState: {
           ...(previewScene.appState ?? {}),
           viewModeEnabled: true,
@@ -221,7 +240,7 @@ export default function ExcalidrawCanvas({
         lastElementsFpRef.current = incomingFp;
         isApplyingRemoteRef.current = true;
         excalidrawAPI.updateScene({
-          elements: incomingElements,
+          elements: normaliseElements(incomingElements),
           appState: { viewModeEnabled: viewMode, zenModeEnabled: false },
           captureUpdate: CaptureUpdateAction.NEVER,
         });
@@ -242,7 +261,7 @@ export default function ExcalidrawCanvas({
     isApplyingRemoteRef.current = true;
 
     excalidrawAPI.updateScene({
-      elements: incomingElements,
+      elements: normaliseElements(incomingElements),
       appState: {
         ...(slide.sceneJSON?.appState ?? {}),
         viewModeEnabled: viewMode,
